@@ -812,6 +812,22 @@ function buildScript(): string {
         el.addEventListener('mousedown', function(e) {
           // Don't intercept clicks on interactive elements inside the panel label / body
           if (e.target.closest && e.target.closest('button,a,input')) return;
+
+          // If the card is not yet selected: don't drag. Let the pan handler take the drag,
+          // and promote this mousedown to a "click-to-select" only if the pointer didn't move.
+          if (selectedId !== nodeId) {
+            var clickStart = { x: e.clientX, y: e.clientY };
+            function onClickUp(ue) {
+              document.removeEventListener('mouseup', onClickUp);
+              var ddx = Math.abs(ue.clientX - clickStart.x);
+              var ddy = Math.abs(ue.clientY - clickStart.y);
+              if (ddx < 3 && ddy < 3) selectNode(nodeId);
+            }
+            document.addEventListener('mouseup', onClickUp);
+            return;
+          }
+
+          // Selected card: full drag flow.
           e.stopPropagation();
           mouseDownPos = { x: e.clientX, y: e.clientY };
           isDragging = false;
@@ -840,12 +856,8 @@ function buildScript(): string {
             document.removeEventListener('mouseup', onUp);
             el.classList.remove('dragging');
             if (!isDragging) {
-              // It was a click
-              if (selectedId === nodeId) {
-                selectNode(null);
-              } else {
-                selectNode(nodeId);
-              }
+              // Click on already-selected card → deselect.
+              selectNode(null);
             }
           }
 
@@ -862,14 +874,18 @@ function buildScript(): string {
     var panOffsetStart = null;
 
     viewport.addEventListener('mousedown', function(e) {
-      if (e.target !== viewport && e.target !== world && e.target !== svg) return;
+      // Selected cards call stopPropagation, so those never reach here (card drag wins).
+      // Unselected cards intentionally let events bubble so pan takes over.
+      var startedOnEmpty = e.target === viewport || e.target === world || e.target === svg;
       panStart = { x: e.clientX, y: e.clientY };
       panOffsetStart = { x: canvasOffset.x, y: canvasOffset.y };
       viewport.classList.add('panning');
+      var moved = false;
 
       function onMove(me) {
         var dx = me.clientX - panStart.x;
         var dy = me.clientY - panStart.y;
+        if (!moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) moved = true;
         canvasOffset.x = panOffsetStart.x + dx;
         canvasOffset.y = panOffsetStart.y + dy;
         applyTransform();
@@ -879,6 +895,8 @@ function buildScript(): string {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         viewport.classList.remove('panning');
+        // Click on empty canvas (no drag) → deselect.
+        if (!moved && startedOnEmpty && selectedId) selectNode(null);
       }
 
       document.addEventListener('mousemove', onMove);

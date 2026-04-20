@@ -25,7 +25,7 @@ export async function run(): Promise<void> {
 
   if (!opts.json) {
     showHeader(VERSION);
-    p.intro(`${c.cyan}Angular Routing Viewer${c.reset}`);
+    p.intro(`${c.dim}Scanning${c.reset} ${c.cyan}${targetAbs}${c.reset}`);
   }
 
   const projectInfo = await (async () => {
