@@ -1,0 +1,25 @@
+{
+  "name": "angular-routing-viewer",
+  "version": "0.1.0",
+  "description": "CLI that statically analyzes Angular project routing and generates an interactive visual graph.",
+  "type": "module",
+  "bin": {
+    "ngrv": "./bin/ngrv.ts"
+  },
+  "scripts": {
+    "start": "bun bin/ngrv.ts",
+    "typecheck": "bun tsc --noEmit",
+    "test": "NO_COLOR=1 bun test"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.11.0",
+    "ts-morph": "^24.0.0"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}
