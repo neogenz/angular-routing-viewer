@@ -500,6 +500,7 @@ function flattenElements(
     } else if (elem.isKind(SyntaxKind.SpreadElement)) {
       // ...(isDevMode() ? [...] : [])
       const spread = elem.asKindOrThrow(SyntaxKind.SpreadElement);
+      const spreadLine = spread.getStartLineNumber();
       let inner: Node = spread.getExpression();
 
       if (inner.isKind(SyntaxKind.ParenthesizedExpression)) {
@@ -509,25 +510,27 @@ function flattenElements(
       if (inner.isKind(SyntaxKind.ConditionalExpression)) {
         const cond = inner.asKindOrThrow(SyntaxKind.ConditionalExpression);
         const whenTrue = cond.getWhenTrue();
+        const condText = cond.getCondition().getText();
+        let addedCount = 0;
+        if (whenTrue.isKind(SyntaxKind.ArrayLiteralExpression)) {
+          const truthyArr = whenTrue.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
+          const flattened = flattenElements(truthyArr, warnings, filePath);
+          addedCount = flattened.length;
+          result.push(...flattened);
+        }
+        const plural = addedCount === 1 ? "" : "s";
         warnings.push({
           level: "info",
-          message: `Conditional spread detected - only the truthy branch is parsed`,
+          message: `Conditional spread (${condText}) — ${addedCount} route${plural} included from truthy branch`,
           file: filePath,
+          line: spreadLine,
         });
-        if (whenTrue.isKind(SyntaxKind.ArrayLiteralExpression)) {
-          result.push(
-            ...flattenElements(
-              whenTrue.asKindOrThrow(SyntaxKind.ArrayLiteralExpression),
-              warnings,
-              filePath
-            )
-          );
-        }
       } else {
         warnings.push({
           level: "warn",
           message: `Non-ternary spread skipped: ${elem.getText().slice(0, 60)}`,
           file: filePath,
+          line: spreadLine,
         });
       }
     }

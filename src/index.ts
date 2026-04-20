@@ -89,8 +89,11 @@ export async function run(): Promise<void> {
 
   if (opts.verbose) {
     printWarnings(graph);
-  } else if (graph.warnings.length > 0) {
-    p.log.warn(`${graph.warnings.length} warning(s) - rerun with --verbose`);
+  } else {
+    const alertCount = graph.warnings.filter((w) => w.level !== "info").length;
+    if (alertCount > 0) {
+      p.log.warn(`${alertCount} warning(s) - rerun with --verbose`);
+    }
   }
 
   const indexPath = join(outDir, "index.html");
@@ -134,10 +137,23 @@ function printSummary(graph: RouteGraph): void {
 
 function printWarnings(graph: RouteGraph): void {
   if (graph.warnings.length === 0) return;
-  p.log.warn(`${graph.warnings.length} warning(s):`);
-  for (const w of graph.warnings) {
-    const loc = w.file ? ` ${c.dim}(${w.file}${w.line ? ":" + w.line : ""})${c.reset}` : "";
-    p.log.message(`  ${c.yellow}!${c.reset} ${w.message}${loc}`);
+  const alerts = graph.warnings.filter((w) => w.level !== "info");
+  const notes = graph.warnings.filter((w) => w.level === "info");
+
+  if (alerts.length > 0) {
+    p.log.warn(`${alerts.length} warning(s):`);
+    for (const w of alerts) {
+      const loc = w.file ? ` ${c.dim}(${w.file}${w.line ? ":" + w.line : ""})${c.reset}` : "";
+      p.log.message(`  ${c.yellow}!${c.reset} ${w.message}${loc}`);
+    }
+  }
+
+  if (notes.length > 0) {
+    p.log.info(`${notes.length} note(s):`);
+    for (const w of notes) {
+      const loc = w.file ? ` ${c.dim}(${w.file}${w.line ? ":" + w.line : ""})${c.reset}` : "";
+      p.log.message(`  ${c.dim}·${c.reset} ${c.dim}${w.message}${c.reset}${loc}`);
+    }
   }
 }
 
