@@ -144,6 +144,9 @@ body {
   width: 100%;
   height: calc(100% - 60px);
   overflow: hidden;
+  background-color: #F8F8FA;
+  background-image: radial-gradient(circle, #E5E5E6 1.2px, transparent 1.2px);
+  background-size: 18px 18px;
 }
 .canvas-viewport.pan-mode {
   cursor: grab;
@@ -156,10 +159,7 @@ body {
   position: absolute;
   top: 0; left: 0;
   width: 100%; height: 100%;
-  background-color: #F8F8FA;
-  background-image: radial-gradient(circle, #E5E5E6 1.2px, transparent 1.2px);
-  background-size: 18px 18px;
-  will-change: transform;
+  transform-origin: 0 0;
 }
 
 .node-card {
@@ -906,8 +906,8 @@ function buildScript(): string {
   function applyTransform() {
     var t = 'translate(' + canvasOffset.x + 'px,' + canvasOffset.y + 'px) scale(' + canvasScale + ')';
     world.style.transform = t;
-    // Shift background dot pattern with pan
-    world.style.backgroundPosition = canvasOffset.x + 'px ' + canvasOffset.y + 'px';
+    // Shift background dot pattern with pan (pattern lives on the viewport so it always fills the screen)
+    viewport.style.backgroundPosition = canvasOffset.x + 'px ' + canvasOffset.y + 'px';
   }
 
   // --- Fit view ---
