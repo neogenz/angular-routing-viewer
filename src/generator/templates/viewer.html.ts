@@ -42,7 +42,10 @@ ${CSS}
       <svg class="connections-svg" id="connectionsSvg"></svg>
     </div>
   </div>
-  <aside class="side-panel" id="sidePanel" hidden></aside>
+  <aside class="side-panel" id="sidePanel" hidden>
+    <div class="panel-resizer" id="panelResizer" title="Drag to resize"></div>
+    <div class="panel-content" id="panelContent"></div>
+  </aside>
   <script>
     window.__GRAPH__ = ${safeGraph};
     window.__LAYOUT__ = ${safeLayout};
@@ -54,12 +57,18 @@ ${embeddedScript}
 
 const CSS = `
 * { box-sizing: border-box; margin: 0; padding: 0; }
+:root { --panel-width: 440px; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   height: 100vh;
   overflow: hidden;
   background: #F8F8FA;
 }
+body.resizing-panel {
+  cursor: ew-resize !important;
+  user-select: none;
+}
+body.resizing-panel * { cursor: ew-resize !important; }
 
 .toolbar {
   position: fixed;
@@ -312,32 +321,86 @@ body {
 .side-panel {
   position: fixed;
   top: 60px; right: 0;
-  width: 380px;
+  width: var(--panel-width);
+  min-width: 320px;
+  max-width: 60vw;
   height: calc(100% - 60px);
-  background: white;
+  background: #FFFFFF;
   border-left: 1px solid #E5E7EB;
-  overflow-y: auto;
-  padding: 20px;
   z-index: 8;
+  display: flex;
+  flex-direction: row;
 }
 .side-panel[hidden] { display: none; }
 
+.panel-resizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 2;
+  transition: background 120ms ease;
+}
+.panel-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.panel-resizer:hover::after,
+.panel-resizer.dragging::after {
+  background: #017BFF;
+}
+
+.panel-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0;
+}
+
+.panel-header {
+  position: sticky;
+  top: 0;
+  background: #FFFFFF;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid #F0F0F2;
+  z-index: 1;
+}
 .panel-close {
-  float: right;
+  position: absolute;
+  top: 14px;
+  right: 14px;
   background: none;
   border: none;
-  font-size: 18px;
+  font-size: 16px;
   cursor: pointer;
-  color: #6B7280;
+  color: #9CA3AF;
   line-height: 1;
-  padding: 2px 4px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 120ms ease, color 120ms ease;
+}
+.panel-close:hover {
+  background: #F3F4F6;
+  color: #374151;
 }
 .panel-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: #111827;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
+  padding-right: 28px;
   word-break: break-all;
+  line-height: 1.35;
 }
 .panel-type-chip {
   display: inline-flex;
@@ -345,39 +408,59 @@ body {
   border-radius: 4px;
   font-size: 11px;
   font-weight: 500;
-  margin-bottom: 16px;
 }
+
 .panel-section {
-  margin-bottom: 16px;
+  padding: 16px 20px;
+  border-top: 1px solid #F0F0F2;
 }
+.panel-section:first-of-type { border-top: none; }
 .panel-section-title {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #6B7280;
-  margin-bottom: 6px;
+  letter-spacing: 0.06em;
+  color: #9CA3AF;
+  margin-bottom: 10px;
 }
 .panel-row {
   display: flex;
-  gap: 8px;
-  margin-bottom: 4px;
-  font-size: 12px;
-  color: #374151;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
 }
+.panel-row:last-child { margin-bottom: 0; }
 .panel-row-label {
+  font-size: 11px;
   font-weight: 500;
-  color: #6B7280;
-  min-width: 80px;
+  color: #9CA3AF;
+  text-transform: none;
+}
+.panel-row-value {
+  font-size: 12.5px;
+  color: #1F2937;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.panel-row-value.mono {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  color: #374151;
 }
 .panel-code {
   font-family: 'SF Mono', Menlo, monospace;
-  font-size: 11px;
-  background: #F3F4F6;
-  padding: 8px 10px;
+  font-size: 11.5px;
+  background: #F7F7F9;
+  border: 1px solid #ECECEF;
+  padding: 10px 12px;
   border-radius: 6px;
   word-break: break-all;
-  color: #374151;
+  overflow-wrap: anywhere;
+  color: #1F2937;
+  max-height: 220px;
+  overflow: auto;
+  line-height: 1.5;
 }
 .panel-badges {
   display: flex;
@@ -558,7 +641,51 @@ function buildScript(): string {
   var viewport = document.getElementById('canvasViewport');
   var svg = document.getElementById('connectionsSvg');
   var sidePanel = document.getElementById('sidePanel');
+  var panelContent = document.getElementById('panelContent');
+  var panelResizer = document.getElementById('panelResizer');
   var searchInput = document.getElementById('search');
+
+  // --- Side panel: resize handle + persisted width ---
+  (function setupPanelResize() {
+    var STORAGE_KEY = 'ngrv:panel-width';
+    var MIN_W = 320;
+    function maxW() { return Math.min(720, Math.round(window.innerWidth * 0.6)); }
+    function clamp(w) { return Math.max(MIN_W, Math.min(maxW(), w)); }
+    function applyWidth(w) {
+      document.documentElement.style.setProperty('--panel-width', clamp(w) + 'px');
+    }
+
+    var saved = parseInt(localStorage.getItem(STORAGE_KEY) || '', 10);
+    if (!isNaN(saved) && saved > 0) applyWidth(saved);
+
+    panelResizer.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      panelResizer.classList.add('dragging');
+      document.body.classList.add('resizing-panel');
+
+      function onMove(me) {
+        var w = window.innerWidth - me.clientX;
+        applyWidth(w);
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        panelResizer.classList.remove('dragging');
+        document.body.classList.remove('resizing-panel');
+        var current = getComputedStyle(document.documentElement).getPropertyValue('--panel-width').trim();
+        var n = parseInt(current, 10);
+        if (!isNaN(n)) localStorage.setItem(STORAGE_KEY, String(n));
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    window.addEventListener('resize', function() {
+      var current = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--panel-width'), 10);
+      if (!isNaN(current)) applyWidth(current);
+    });
+  })();
 
   // Render all node cards
   var cardEls = {};
@@ -676,6 +803,11 @@ function buildScript(): string {
     }
   }
 
+  function row(label, value, mono) {
+    var cls = 'panel-row-value' + (mono ? ' mono' : '');
+    return '<div class="panel-row"><div class="panel-row-label">' + escHtml(label) + '</div><div class="' + cls + '">' + escHtml(value) + '</div></div>';
+  }
+
   function renderSidePanel(node) {
     if (!node) {
       sidePanel.hidden = true;
@@ -683,20 +815,23 @@ function buildScript(): string {
     }
     var ts = TYPE_STYLES[node.type] || TYPE_STYLES['route'];
 
-    var html = '<button class="panel-close" id="panelClose">&#x2715;</button>';
+    var html = '';
+    html += '<div class="panel-header">';
+    html += '<button class="panel-close" id="panelClose" aria-label="Close">&#x2715;</button>';
     html += '<div class="panel-title">' + escHtml(node.path || '<empty>') + '</div>';
     html += '<div class="panel-type-chip" style="color:' + ts.color + ';background:' + ts.bg + '">' + ts.label + '</div>';
+    html += '</div>';
 
     html += '<div class="panel-section">';
     html += '<div class="panel-section-title">Information</div>';
-    html += '<div class="panel-row"><span class="panel-row-label">ID</span><span>' + escHtml(node.id) + '</span></div>';
-    html += '<div class="panel-row"><span class="panel-row-label">Path</span><span>' + escHtml(node.path) + '</span></div>';
-    html += '<div class="panel-row"><span class="panel-row-label">Full path</span><span style="font-family:monospace;font-size:11px">' + escHtml(node.fullPath) + '</span></div>';
-    html += '<div class="panel-row"><span class="panel-row-label">Type</span><span>' + escHtml(node.type) + '</span></div>';
-    if (node.pathMatch) html += '<div class="panel-row"><span class="panel-row-label">pathMatch</span><span>' + escHtml(node.pathMatch) + '</span></div>';
-    if (node.outlet) html += '<div class="panel-row"><span class="panel-row-label">outlet</span><span>' + escHtml(node.outlet) + '</span></div>';
-    if (node.matcher) html += '<div class="panel-row"><span class="panel-row-label">matcher</span><span>' + escHtml(node.matcher) + '</span></div>';
-    if (node.runGuardsAndResolvers) html += '<div class="panel-row"><span class="panel-row-label">runGuards</span><span>' + escHtml(node.runGuardsAndResolvers) + '</span></div>';
+    html += row('ID', node.id, true);
+    html += row('Path', node.path);
+    html += row('Full path', node.fullPath, true);
+    html += row('Type', node.type);
+    if (node.pathMatch) html += row('pathMatch', node.pathMatch);
+    if (node.outlet) html += row('outlet', node.outlet);
+    if (node.matcher) html += row('matcher', node.matcher);
+    if (node.runGuardsAndResolvers) html += row('runGuards', node.runGuardsAndResolvers);
     html += '</div>';
 
     if (node.component) {
@@ -711,7 +846,7 @@ function buildScript(): string {
       html += '<div class="panel-section-title">Lazy component</div>';
       html += '<div class="panel-code">' + escHtml(node.loadComponent.source) + '</div>';
       if (node.loadComponent.resolvedFile) {
-        html += '<div class="panel-row" style="margin-top:4px"><span class="panel-row-label">Fichier</span><span style="font-family:monospace;font-size:11px">' + escHtml(node.loadComponent.resolvedFile) + '</span></div>';
+        html += '<div style="margin-top:10px">' + row('File', node.loadComponent.resolvedFile, true) + '</div>';
       }
       html += '</div>';
     }
@@ -721,7 +856,7 @@ function buildScript(): string {
       html += '<div class="panel-section-title">Lazy module</div>';
       html += '<div class="panel-code">' + escHtml(node.loadChildren.source) + '</div>';
       if (node.loadChildren.resolvedFile) {
-        html += '<div class="panel-row" style="margin-top:4px"><span class="panel-row-label">Fichier</span><span style="font-family:monospace;font-size:11px">' + escHtml(node.loadChildren.resolvedFile) + '</span></div>';
+        html += '<div style="margin-top:10px">' + row('File', node.loadChildren.resolvedFile, true) + '</div>';
       }
       html += '</div>';
     }
@@ -736,8 +871,8 @@ function buildScript(): string {
     if (node.title) {
       html += '<div class="panel-section">';
       html += '<div class="panel-section-title">Title</div>';
-      html += '<div class="panel-row"><span class="panel-row-label">Source</span><span>' + escHtml(node.title.source) + '</span></div>';
-      html += '<div class="panel-row"><span class="panel-row-label">Type</span><span>' + escHtml(node.title.kind) + '</span></div>';
+      html += row('Source', node.title.source);
+      html += row('Type', node.title.kind);
       html += '</div>';
     }
 
@@ -764,7 +899,7 @@ function buildScript(): string {
     if (node.data && Object.keys(node.data).length > 0) {
       html += '<div class="panel-section">';
       html += '<div class="panel-section-title">Data</div>';
-      html += '<div class="panel-code" style="white-space:pre-wrap;word-break:break-all">' + escHtml(JSON.stringify(node.data, null, 2)) + '</div>';
+      html += '<div class="panel-code" style="white-space:pre-wrap">' + escHtml(JSON.stringify(node.data, null, 2)) + '</div>';
       html += '</div>';
     }
 
@@ -778,11 +913,12 @@ function buildScript(): string {
 
     html += '<div class="panel-section">';
     html += '<div class="panel-section-title">Source</div>';
-    html += '<div class="panel-row"><span class="panel-row-label">Fichier</span><span style="font-family:monospace;font-size:11px">' + escHtml(node.sourceFile) + '</span></div>';
-    html += '<div class="panel-row"><span class="panel-row-label">Ligne</span><span>' + node.sourceLine + '</span></div>';
+    html += row('File', node.sourceFile, true);
+    html += row('Line', String(node.sourceLine));
     html += '</div>';
 
-    sidePanel.innerHTML = html;
+    panelContent.innerHTML = html;
+    panelContent.scrollTop = 0;
     sidePanel.hidden = false;
 
     document.getElementById('panelClose').addEventListener('click', function() {
