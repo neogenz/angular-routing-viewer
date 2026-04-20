@@ -431,27 +431,35 @@ function findDefaultReExport(sf: SourceFile): string | undefined {
   return undefined;
 }
 
+// Strip `as T` and `satisfies T` wrappers (either order, possibly nested).
+function unwrapTypeAssertion(expr: Expression): Expression {
+  let current = expr;
+  while (
+    current.isKind(SyntaxKind.AsExpression) ||
+    current.isKind(SyntaxKind.SatisfiesExpression)
+  ) {
+    current = current.isKind(SyntaxKind.AsExpression)
+      ? current.asKindOrThrow(SyntaxKind.AsExpression).getExpression()
+      : current.asKindOrThrow(SyntaxKind.SatisfiesExpression).getExpression();
+  }
+  return current;
+}
+
 // Find the Routes array in a SourceFile
 // Priority: export default > first exported Routes var > first `: Routes =` var
 function findRoutesArray(sf: SourceFile): ArrayLiteralExpression | undefined {
-  // 1. export default [...] satisfies Routes
+  // 1. export default [...] (optionally `as Routes` / `satisfies Routes`)
   // 2. export default xxx (where xxx is a Routes var)
   const defaultExport = sf.getDefaultExportSymbol();
   if (defaultExport) {
     const decls = defaultExport.getDeclarations();
     for (const decl of decls) {
-      // export default [...]
       if (decl.isKind(SyntaxKind.ExportAssignment)) {
-        const expr = decl.asKindOrThrow(SyntaxKind.ExportAssignment).getExpression();
+        const expr = unwrapTypeAssertion(
+          decl.asKindOrThrow(SyntaxKind.ExportAssignment).getExpression()
+        );
         if (expr.isKind(SyntaxKind.ArrayLiteralExpression)) {
           return expr.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
-        }
-        // export default xxx satisfies Routes → AsExpression containing array
-        if (expr.isKind(SyntaxKind.SatisfiesExpression)) {
-          const inner = expr.asKindOrThrow(SyntaxKind.SatisfiesExpression).getExpression();
-          if (inner.isKind(SyntaxKind.ArrayLiteralExpression)) {
-            return inner.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
-          }
         }
         // export default identifier → find it
         if (expr.isKind(SyntaxKind.Identifier)) {

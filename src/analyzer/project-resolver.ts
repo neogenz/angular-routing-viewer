@@ -92,10 +92,17 @@ async function parseTsconfigPaths(
     if (!isRecord(raw)) return baseUrl;
     const dir = dirname(abs);
 
-    // Resolve extends first (so child values override parent)
+    // Resolve extends first (so child values override parent).
+    // `extends` can be a string or an array of strings (TS 5.0+).
     const extendsVal = raw["extends"];
-    if (typeof extendsVal === "string") {
-      const parentPath = resolve(dir, extendsVal);
+    const extendsList =
+      typeof extendsVal === "string"
+        ? [extendsVal]
+        : Array.isArray(extendsVal)
+          ? extendsVal.filter((e): e is string => typeof e === "string")
+          : [];
+    for (const entry of extendsList) {
+      const parentPath = resolve(dir, entry);
       const parent = parentPath.endsWith(".json")
         ? parentPath
         : parentPath + ".json";
