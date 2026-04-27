@@ -1,5 +1,5 @@
 import * as p from "@clack/prompts";
-import { resolve, join, isAbsolute } from "path";
+import { resolve, join, isAbsolute, relative, sep } from "path";
 import { mkdir, writeFile } from "fs/promises";
 import { parseCliArgs } from "./cli/args";
 import { printHelp, showHeader, c } from "./cli/display";
@@ -62,6 +62,8 @@ export async function run(): Promise<void> {
     }
   })();
 
+  relativizeGraph(graph, projectInfo.projectRoot);
+
   if (opts.json) {
     process.stdout.write(JSON.stringify(graph, null, 2));
     return;
@@ -102,6 +104,39 @@ export async function run(): Promise<void> {
   if (opts.open) {
     await openInBrowser(indexPath);
   }
+}
+
+function toPortable(p: string): string {
+  return sep === "\\" ? p.split(sep).join("/") : p;
+}
+
+function rel(root: string, file: string | undefined): string | undefined {
+  if (!file) return file;
+  if (!isAbsolute(file)) return file;
+  const r = relative(root, file);
+  return toPortable(r === "" ? "." : r);
+}
+
+function relativizeGraph(graph: RouteGraph, root: string): void {
+  const walk = (nodes: RouteNode[]): void => {
+    for (const n of nodes) {
+      const sf = rel(root, n.sourceFile);
+      if (sf) n.sourceFile = sf;
+      if (n.loadChildren?.resolvedFile) {
+        n.loadChildren.resolvedFile = rel(root, n.loadChildren.resolvedFile);
+      }
+      if (n.loadComponent?.resolvedFile) {
+        n.loadComponent.resolvedFile = rel(root, n.loadComponent.resolvedFile);
+      }
+      walk(n.children);
+    }
+  };
+  walk(graph.roots);
+  for (const w of graph.warnings) {
+    if (w.file) w.file = rel(root, w.file);
+  }
+  const ef = rel(root, graph.metadata.entryFile);
+  if (ef) graph.metadata.entryFile = ef;
 }
 
 function countRoutes(graph: RouteGraph): number {
