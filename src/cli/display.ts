@@ -24,7 +24,7 @@ export function printHelp(version: string): void {
   console.log(`${c.bold}ngrv${c.reset} v${version} - Angular Routing Viewer
 
 ${c.bold}Usage:${c.reset}
-  bunx ngrv [path] [options]
+  ngrv [path] [options]
 
 ${c.bold}Arguments:${c.reset}
   path                  Path to the Angular project (default: cwd)
@@ -39,8 +39,9 @@ ${c.bold}Options:${c.reset}
   --help, -h            Show this help
 
 ${c.bold}Examples:${c.reset}
-  bunx ngrv
-  bunx ngrv ./my-angular-app --open
-  bunx ngrv --entry src/app/app.routes.ts
+  ngrv
+  ngrv ./my-angular-app --open
+  ngrv --entry src/app/app.routes.ts
+  npx angular-routing-viewer            # run without installing
 `);
 }

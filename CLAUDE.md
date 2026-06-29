@@ -16,7 +16,17 @@ Run the CLI against a real Angular app for end-to-end smoke testing:
 bun run bin/ngrv.ts /path/to/angular-app --verbose
 ```
 
-There is no build: Bun runs `.ts` directly via the `#!/usr/bin/env bun` shebang in `bin/ngrv.ts`.
+There is no build for development: Bun runs `.ts` directly via the `#!/usr/bin/env bun` shebang in `bin/ngrv.ts`. The published artifact is different — see below.
+
+## Release / distribution
+
+Shipped to users via **npm** (`npx angular-routing-viewer`, or `npm i -g` for the `ngrv` command). End users run it under plain **Node** — Bun is dev-only.
+
+The published bin is `dist/ngrv.js`, produced by `scripts/build.ts` (`bun run build`): `bun build --target node` bundles `bin/ngrv.ts`, keeping `ts-morph` and `@clack/prompts` external (npm installs them), then rewrites the entry shebang from `bun` to `node`. `dist/` is gitignored; `prepublishOnly` rebuilds it at publish time. Only `dist/` is published (`files` field).
+
+The code must stay Node-compatible — no `Bun.*` runtime APIs (the two that existed, `Bun.argv` and `Bun.spawn`, were ported to `process.argv` and `node:child_process`).
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds the bundle and runs `npm publish --provenance` (needs repo secret `NPM_TOKEN`). On every release bump **both** `package.json` `version` (what npm publishes) and `src/index.ts` `VERSION` (what `ngrv --help` prints). Full process: README "Releasing".
 
 ## Pipeline architecture
 

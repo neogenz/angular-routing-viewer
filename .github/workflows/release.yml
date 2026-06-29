@@ -1,0 +1,38 @@
+name: publish
+
+# Ship a version: bump it, then push a tag.
+#   npm version patch   # bumps package.json + creates the git tag
+#   git push --follow-tags
+# This builds the Node bundle and publishes to npm.
+# Requires repo secret NPM_TOKEN (npm automation token).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run scripts/build.ts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -4,12 +4,36 @@
   "description": "CLI that statically analyzes Angular project routing and generates an interactive visual graph.",
   "type": "module",
   "bin": {
-    "ngrv": "./bin/ngrv.ts"
+    "ngrv": "dist/ngrv.js"
   },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "angular",
+    "routing",
+    "routes",
+    "graph",
+    "visualization",
+    "cli",
+    "static-analysis"
+  ],
+  "homepage": "https://github.com/neogenz/angular-routing-viewer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neogenz/angular-routing-viewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/neogenz/angular-routing-viewer/issues"
+  },
+  "author": "Maxime De Sogus <maxime.desogus@gmail.com>",
+  "license": "MIT",
   "scripts": {
     "start": "bun bin/ngrv.ts",
+    "build": "bun run scripts/build.ts",
     "typecheck": "bun tsc --noEmit",
-    "test": "NO_COLOR=1 bun test"
+    "test": "NO_COLOR=1 bun test",
+    "prepublishOnly": "bun run scripts/build.ts"
   },
   "dependencies": {
     "@clack/prompts": "^0.11.0",
@@ -20,6 +44,7 @@
     "typescript": "^5.5.0"
   },
   "engines": {
+    "node": ">=18.3.0",
     "bun": ">=1.0.0"
   }
 }

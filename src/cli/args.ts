@@ -13,7 +13,7 @@ export interface CliOptions {
 
 export function parseCliArgs(): CliOptions {
   const { values, positionals } = parseArgs({
-    args: Bun.argv.slice(2),
+    args: process.argv.slice(2),
     options: {
       output: { type: "string" },
       entry: { type: "string" },

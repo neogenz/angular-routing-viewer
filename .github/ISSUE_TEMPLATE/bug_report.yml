@@ -1,0 +1,42 @@
+name: Bug report
+description: Something analyzed wrong, crashed, or rendered incorrectly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >
+        How is routing declared in the affected file(s)? Paste the relevant
+        route shape (export default / export const : Routes / barrel re-export /
+        path constants) and any tsconfig path aliases involved. A link to a
+        minimal repro repo is ideal.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: CLI output
+      description: Run with `--verbose` and paste the output.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: ngrv version
+      description: Output of `ngrv --help` (first line) or the npm version installed.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Node version, OS, and Angular version.
+    validations:
+      required: true

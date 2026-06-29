@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun tsc --noEmit
+
+      - name: Build the Node bundle
+        run: bun run build
+
+      - name: Smoke-test the bundle under Node
+        run: node dist/ngrv.js --help
+
+      - name: Test
+        run: bun test

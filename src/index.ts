@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import { resolve, join, isAbsolute, relative, sep } from "path";
 import { mkdir, writeFile } from "fs/promises";
+import { spawn } from "node:child_process";
 import { parseCliArgs } from "./cli/args";
 import { printHelp, showHeader, c } from "./cli/display";
 import { resolveAngularProject } from "./analyzer/project-resolver";
@@ -193,11 +194,15 @@ function printWarnings(graph: RouteGraph): void {
 }
 
 async function openInBrowser(path: string): Promise<void> {
-  const cmd = process.platform === "darwin" ? "open"
-    : process.platform === "win32" ? "start"
-    : "xdg-open";
   try {
-    Bun.spawn([cmd, path], { stdout: "ignore", stderr: "ignore" });
+    const child = process.platform === "win32"
+      ? spawn("cmd", ["/c", "start", "", path], { stdio: "ignore", detached: true })
+      : spawn(process.platform === "darwin" ? "open" : "xdg-open", [path], {
+          stdio: "ignore",
+          detached: true,
+        });
+    child.on("error", () => {}); // spawn failures surface async, not as throws
+    child.unref();
   } catch {
     // ignore
   }
