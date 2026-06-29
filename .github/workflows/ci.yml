@@ -25,6 +25,5 @@ jobs:
 
       - name: Smoke-test the bundle under Node
         run: node dist/ngrv.js --help
-
-      - name: Test
-        run: bun test
+      # Add a `bun test` step here once test files exist
+      # (newer Bun exits non-zero when no tests are found).
