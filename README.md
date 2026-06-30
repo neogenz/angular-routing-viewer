@@ -161,11 +161,13 @@ Publishing to npm is automated by `.github/workflows/release.yml` — pushing a 
 
 Users get the new version automatically the next time they `npx angular-routing-viewer`, or via `npm update -g angular-routing-viewer`.
 
-**One-time setup:** add an npm [automation token](https://docs.npmjs.com/creating-and-viewing-access-tokens) as the repo secret `NPM_TOKEN`:
+**One-time setup:** publishing uses npm [Trusted Publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) — no token to create or store. On npmjs.com → the package → **Settings → Trusted Publisher**, add:
 
-```bash
-gh secret set NPM_TOKEN --repo neogenz/angular-routing-viewer
-```
+- Provider: GitHub Actions
+- Repository: `neogenz/angular-routing-viewer`
+- Workflow: `release.yml`
+
+The workflow already has the required `id-token: write` permission.
 
 Or skip CI entirely and publish from your machine: `npm version patch && npm publish` (the `prepublishOnly` hook builds the bundle first; you must be `npm login`'d).
 

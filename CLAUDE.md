@@ -26,7 +26,7 @@ The published bin is `dist/ngrv.js`, produced by `scripts/build.ts` (`bun run bu
 
 The code must stay Node-compatible — no `Bun.*` runtime APIs (the two that existed, `Bun.argv` and `Bun.spawn`, were ported to `process.argv` and `node:child_process`).
 
-Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds the bundle and runs `npm publish --provenance` (needs repo secret `NPM_TOKEN`). On every release bump **both** `package.json` `version` (what npm publishes) and `src/index.ts` `VERSION` (what `ngrv --help` prints). Full process: README "Releasing".
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds the bundle and runs `npm publish` via npm Trusted Publishing (OIDC — no token; needs `id-token: write`, already set, and the repo/workflow registered as a Trusted Publisher on npmjs). On every release bump **both** `package.json` `version` (what npm publishes) and `src/index.ts` `VERSION` (what `ngrv --help` prints). Full process: README "Releasing".
 
 ## Pipeline architecture
 
