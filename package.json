@@ -1,6 +1,6 @@
 {
   "name": "angular-routing-viewer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI that statically analyzes Angular project routing and generates an interactive visual graph.",
   "type": "module",
   "bin": {

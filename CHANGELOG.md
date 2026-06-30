@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-30
+
+### Changed
+
+- Update analysis dependencies: `ts-morph` 24 → 28, `@clack/prompts` 0.11 → 1.6
+  (graph output verified unchanged).
+
 ## [0.1.0] - 2026-06-29
 
 ### Added
@@ -19,5 +26,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--verbose`, `--help`.
 - Distribution via npm; runs under plain Node (Bun is dev-only).
 
-[Unreleased]: https://github.com/neogenz/angular-routing-viewer/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/neogenz/angular-routing-viewer/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/neogenz/angular-routing-viewer/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/neogenz/angular-routing-viewer/releases/tag/v0.1.0

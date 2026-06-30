@@ -10,7 +10,7 @@ import { buildRouteGraph } from "./analyzer/route-parser";
 import { renderViewerHtml } from "./generator/html-builder";
 import type { RouteGraph, RouteNode } from "./analyzer/types";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 export async function run(): Promise<void> {
   const opts = parseCliArgs();
