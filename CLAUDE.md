@@ -33,30 +33,35 @@ Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds the bu
 Three strict stages orchestrated by `src/index.ts → run()`:
 
 1. **`resolveAngularProject`** (`src/analyzer/project-resolver.ts`)
-   Walks up from the target path to find `angular.json`, picks the right project (by name / defaultProject / first), resolves the `tsconfig.app.json` via its `extends` chain, and **pre-resolves** `compilerOptions.paths` to absolute paths against `baseUrl` (this pre-resolution is load-bearing — downstream code assumes `tsconfigPaths.paths[k][i]` is already absolute). A custom JSONC stripper handles angular.json's glob patterns like `**/*.ts` which defeat naive regex approaches.
+   Delegates to `workspace-discovery.ts`, which walks upward for `angular.json` or `nx.json`. Angular CLI projects come from `angular.json`; Nx projects come from static `project.json` and `package.json#nx` metadata. Selection is explicit via `--project`, inferred from a target inside an app root, or accepted when only one application exists; ambiguous roots fail instead of choosing an arbitrary app. The resolver follows the selected tsconfig's `extends` chain and pre-resolves `compilerOptions.paths` to absolute paths against the declaring `baseUrl`. Downstream import resolution relies on those absolute targets.
 
 2. **`buildRouteGraph`** (`src/analyzer/route-parser.ts`)
-   Single shared `ts-morph` `Project` instance threaded through every parse call. This is critical: constant resolution (`ROUTES.WELCOME` → `'welcome'`) calls `project.addSourceFileAtPathIfExists` on-the-fly to follow imports. If you ever introduce a second Project, symbol resolution breaks silently.
+   Creates one shared `ts-morph` `Project` and passes it to `route-source-resolver.ts` and every parse call. The resolver maps aliases, relative imports, workspace package names, and `baseUrl` imports to files, then follows named/default/star exports through barrels. Route parsing composes imported arrays, spreads, `children`, lazy routes, and `RouterModule.forRoot` / `RouterModule.forChild`. Keep the shared Project: constant and export resolution add source files on demand.
 
 3. **`renderViewerHtml`** (`src/generator/html-builder.ts`)
    Computes layout (`computeLayout` in `layout.ts`, two-pass tidy tree: post-order subtree width + pre-order centered placement), then delegates to `buildHtml` in `templates/viewer.html.ts` which returns one self-contained HTML string with all CSS and JS inlined. No CDN, no framework.
 
+Before rendering or JSON output, `src/index.ts` rewrites entry, route source, lazy target, and warning file paths relative to `workspaceRoot`. Do not change these to project-root-relative paths: library routes may live outside the selected application's root.
+
 ## Non-obvious gotchas
 
-**Routes array discovery order** (`findRoutesArray` in `route-parser.ts`):
-1. `export default [...]` / `export default xxx satisfies Routes` / `export default identifier`
-2. `export const xxx: Routes = [...]` (type-annotated variable)
-3. Barrel re-export chain: `export { default } from './foo'` is followed via `findDefaultReExport` + `resolveImportSpecifier` (one-level recursion into target file).
+**Routes array discovery order** (`findRoutesExpression` in `route-parser.ts`):
+1. A requested named export when an import or lazy callback selects one.
+2. `export default [...]`, including identifiers and `as` / `satisfies` wrappers.
+3. Type-identified arrays using `Routes`, `Route[]`, and supported readonly variants.
+4. NgModule metadata containing `RouterModule.forRoot(...)` or `RouterModule.forChild(...)`.
 
-Real-world Angular apps use all four forms across their `*.routes.ts` files — test new parsing changes against each.
+Barrel traversal belongs to `route-source-resolver.ts`. It follows named re-exports, aliases, and star exports recursively; do not reintroduce route-parser-only, one-level barrel handling.
 
-**Spread handling**: `...(isDevMode() ? [...] : [])` is flattened to the truthy branch only, with an info-level warning. Non-ternary spreads are skipped with a warn-level warning.
+**Spread handling**: direct local or imported route arrays are resolved recursively. `...(isDevMode() ? [...] : [])` is flattened to the truthy branch only, with an info-level warning. An unresolved spread gets a warn-level warning.
 
 **Constant resolution** (`resolveToStringLiteral` in `route-parser.ts`): for `path: ROUTES.WELCOME` and `title: PAGE_TITLES.X`, the parser follows the identifier's import declaration, loads the target file into the ts-morph project, and reads the object literal's key. If resolution fails, it falls back to the source text (e.g. `ROUTES.UNKNOWN`), and a secondary heuristic downstream strips the object prefix and kebab-cases it.
 
-**Cycle detection**: the `visited: Map<filePath, RouteNode[]>` is set to `[]` *before* parsing starts, so re-entry detects the cycle and emits a warning rather than looping. Don't inline this — the empty-array-as-sentinel matters.
+**Source identity and cycles**: a route source is `(absolute file path, exported symbol)`, not only a file. Cycle checks use branch-local recursion stacks for route sources, route-array expressions, NgModules, and barrel exports. Do not replace them with a global `visited` map: the same library route array may be mounted under multiple parent paths and must produce a distinct subtree each time.
 
-**Lazy resolution order** in `resolveImportSpecifier`: tsconfig path aliases (`@core/*`) → relative (`./foo`) → baseUrl-relative. Extensions tried in order: `""`, `.ts`, `.routes.ts`, `/index.ts`.
+**Import resolution order** in `resolveImportSpecifier`: tsconfig path aliases (`@core/*`) → relative or absolute paths (`./foo`) → exact Nx workspace package names → `baseUrl`-relative. Extensions tried in order: `""`, `.ts`, `.routes.ts`, `/index.ts`. Export resolution is a separate step and must preserve the selected export name through barrels.
+
+**Static boundary**: runtime-computed providers, plugin-only Nx project inference, Module Federation, and loaders without a statically visible import/export cannot be reconstructed. Preserve explicit warnings for unresolved imports, exports, spreads, loaders, and cycles; never present a partial branch as successfully resolved.
 
 ## HTML template conventions
 

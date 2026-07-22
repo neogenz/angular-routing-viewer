@@ -17,5 +17,6 @@
     "noPropertyAccessFromIndexSignature": false,
     "types": ["bun-types"]
   },
-  "include": ["bin/**/*", "src/**/*"]
+  "include": ["bin/**/*", "src/**/*", "tests/**/*.test.ts"],
+  "exclude": ["tests/fixtures/**/*"]
 }

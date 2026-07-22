@@ -10,8 +10,8 @@ Statically analyze any Angular (v17+) app's routing and get a **self-contained i
 npx angular-routing-viewer --open
 ```
 
-- **Zero-config** — auto-detects `angular.json`, the right project, and your route entry files.
-- **Deep static analysis** — follows `loadChildren` / `loadComponent`, resolves path constants (`ROUTES.WELCOME`), barrel re-exports, and tsconfig path aliases.
+- **Workspace-aware** — detects Angular CLI and statically configured Nx workspaces, then selects the requested application.
+- **Deep static analysis** — follows app and library route fragments, `loadChildren` / `loadComponent`, path constants (`ROUTES.WELCOME`), barrel re-exports, and tsconfig path aliases.
 - **Self-contained output** — one `index.html` with all CSS/JS inlined. Drag, pan, search, inspect.
 - **Runs on plain Node** — no Bun required to use it.
 
@@ -86,9 +86,28 @@ ngrv --open          # ...and open it in the browser
 ```bash
 ngrv ./my-app --open                 # analyze a path + open the graph
 ngrv --entry src/app/app.routes.ts   # force the entry file
-ngrv --project admin                 # pick an app in a multi-app workspace
+ngrv --project admin                 # pick an Angular app in a multi-app or Nx workspace
 ngrv --json > routes.json            # raw JSON export, no HTML
 ```
+
+### Nx workspaces
+
+Run the command from the workspace root and select the application when the workspace contains more than one:
+
+```bash
+ngrv /path/to/nx-workspace --project admin --open
+```
+
+Nx discovery reads static project metadata from `project.json` and `package.json#nx`; it does not run Nx plugins or application code. If the target path is inside an application root, that application is selected automatically. Otherwise a multi-app workspace requires `--project <name>`.
+
+Workspace libraries can contribute routes through:
+
+- `Routes`, `Route[]`, default exports, named exports, and nested barrel re-exports.
+- Imported `children`, local or imported route-array spreads, and statically resolvable `loadChildren` callbacks.
+- Relative imports, inherited tsconfig aliases, `baseUrl`, and Nx library package names.
+- Standalone routes and NgModule routing through `RouterModule.forRoot` / `RouterModule.forChild`.
+
+File locations in CLI JSON, warnings, and generated graph data are workspace-relative, including sources reached through libraries.
 
 ---
 
@@ -117,8 +136,9 @@ ngrv --json > routes.json            # raw JSON export, no HTML
 
 ## Limitations
 
-- Static analysis only — no code is evaluated, so routes injected through non-standard dynamic providers may be missed.
-- `...(cond ? [...] : [])` spreads are flattened to the truthy branch (with a warning); non-ternary spreads are skipped.
+- Static analysis only — no code is evaluated. Runtime-computed routes, dynamic providers, and Nx projects available only through plugin inference are outside the compatibility guarantee.
+- Module Federation and other runtime-selected loaders cannot be traversed unless their import and exported route array are statically visible. Unresolved route imports, exports, loaders, spreads, and cycles are reported as analyzer warnings rather than silently treated as complete.
+- `...(cond ? [...] : [])` spreads are flattened to the truthy branch (with a warning); other spreads must resolve to a static local or imported route array or they are skipped with a warning.
 - `canLoad` guards are shown but flagged deprecated — prefer `canMatch`.
 
 ---
