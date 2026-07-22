@@ -15,6 +15,14 @@ const adminRoutes = join(
   nxWorkspace,
   "apps/admin/src/app/app.routes.ts",
 );
+const defaultComponentRoutes = join(
+  nxWorkspace,
+  "apps/admin/src/app/default-component.routes.ts",
+);
+const defaultComponent = join(
+  nxWorkspace,
+  "libs/default-component/src/index.ts",
+);
 const ordersIndex = join(nxWorkspace, "libs/orders/src/index.ts");
 const ordersRoutes = join(
   nxWorkspace,
@@ -134,6 +142,17 @@ describe("lazy route import selection", () => {
     const childPaths = graph.roots[0]?.children.map(({ fullPath }) => fullPath);
     expect(childPaths).toContain("/orders/list");
     expect(childPaths).not.toContain("/orders/not-orders");
+  });
+
+  test("resolves a direct loadComponent import with a default class export", async () => {
+    const info = await resolveAngularProject(nxWorkspace, "admin");
+    const graph = await buildRouteGraph(defaultComponentRoutes, info);
+
+    expect(graph.roots[0]?.loadComponent).toEqual({
+      source: "@acme/default-component",
+      resolvedFile: defaultComponent,
+    });
+    expect(graph.warnings).toEqual([]);
   });
 });
 

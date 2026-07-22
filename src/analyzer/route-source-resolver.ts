@@ -105,7 +105,11 @@ export async function resolveImportSpecifier(
 
 function localDeclarationExists(sourceFile: SourceFile, exportName: string): boolean {
   if (exportName === "default") {
-    return sourceFile.getExportAssignments().some((assignment) => !assignment.isExportEquals());
+    return (
+      sourceFile.getExportAssignments().some((assignment) => !assignment.isExportEquals()) ||
+      sourceFile.getClasses().some((declaration) => declaration.isDefaultExport()) ||
+      sourceFile.getFunctions().some((declaration) => declaration.isDefaultExport())
+    );
   }
   const variable = sourceFile.getVariableDeclaration(exportName);
   if (variable?.getVariableStatement()?.isExported()) return true;
