@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "paths": {
+      "@fixture/store/*": ["apps/store/client/*"]
+    }
+  },
+  "include": ["client/**/*.ts"]
+}

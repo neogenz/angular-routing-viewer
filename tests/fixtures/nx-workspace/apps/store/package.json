@@ -1,0 +1,9 @@
+{
+  "name": "@fixture/store",
+  "private": true,
+  "nx": {
+    "name": "store",
+    "projectType": "application",
+    "sourceRoot": "apps/store/client"
+  }
+}

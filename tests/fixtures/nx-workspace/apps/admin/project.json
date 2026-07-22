@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "name": "admin",
+  "projectType": "application",
+  "root": "apps/admin",
+  "sourceRoot": "apps/admin/src",
+  "targets": {
+    "build": {
+      "executor": "@angular/build:application",
+      "options": {
+        "tsConfig": "apps/admin/tsconfig.app.json"
+      }
+    }
+  }
+}

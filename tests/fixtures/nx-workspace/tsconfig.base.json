@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@fixture/shared/*": ["libs/shared/src/*"],
+      "@fixture/ui": ["libs/ui/src/index.ts"]
+    }
+  }
+}

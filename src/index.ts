@@ -63,7 +63,7 @@ export async function run(): Promise<void> {
     }
   })();
 
-  relativizeGraph(graph, projectInfo.projectRoot);
+  relativizeGraph(graph, projectInfo.workspaceRoot);
 
   if (opts.json) {
     process.stdout.write(JSON.stringify(graph, null, 2));

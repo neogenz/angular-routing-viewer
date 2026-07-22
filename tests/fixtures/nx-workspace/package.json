@@ -1,0 +1,14 @@
+{
+  "name": "nx-workspace-fixture",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "libs/*"
+  ],
+  "dependencies": {
+    "@angular/core": "^21.0.0"
+  },
+  "devDependencies": {
+    "nx": "^22.0.0"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "angular-workspace-fixture",
+  "private": true,
+  "dependencies": {
+    "@angular/core": "^21.0.0"
+  }
+}

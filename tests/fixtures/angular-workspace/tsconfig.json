@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@legacy/*": ["projects/legacy-lib/src/*"]
+    }
+  }
+}

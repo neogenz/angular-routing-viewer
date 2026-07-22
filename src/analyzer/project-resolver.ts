@@ -1,278 +1,200 @@
 import { readFile } from "fs/promises";
-import { resolve, dirname, join } from "path";
-import type { AngularProjectInfo, TsconfigPaths } from "./types.js";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
+import type { AngularProjectInfo, TsconfigPaths, WorkspaceProjectInfo } from "./types.js";
+import {
+  discoverWorkspace,
+  isRecord,
+  readJsonc,
+  type DiscoveredWorkspace,
+  type WorkspaceProject,
+} from "./workspace-discovery.js";
 
-// Strip JSONC using a state machine — handles // and /* */ inside strings correctly
-function stripJsonc(text: string): string {
-  let out = "";
-  let i = 0;
-  let inString = false;
-
-  while (i < text.length) {
-    const ch = text[i];
-
-    if (inString) {
-      if (ch === "\\") {
-        // Escape: copy both chars verbatim
-        out += text[i] + text[i + 1];
-        i += 2;
-        continue;
-      }
-      if (ch === '"') inString = false;
-      out += ch;
-      i++;
-      continue;
-    }
-
-    // Not in string
-    if (ch === '"') {
-      inString = true;
-      out += ch;
-      i++;
-      continue;
-    }
-
-    // Block comment
-    if (ch === "/" && text[i + 1] === "*") {
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
-        i++;
-      }
-      i += 2; // skip */
-      continue;
-    }
-
-    // Line comment
-    if (ch === "/" && text[i + 1] === "/") {
-      i += 2;
-      while (i < text.length && text[i] !== "\n") {
-        i++;
-      }
-      continue;
-    }
-
-    out += ch;
-    i++;
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await readFile(filePath);
+    return true;
+  } catch {
+    return false;
   }
-
-  // Remove trailing commas before } or ]
-  return out.replace(/,(\s*[}\]])/g, "$1");
 }
 
-async function readJsonc(filePath: string): Promise<unknown> {
-  const text = await readFile(filePath, "utf-8");
-  return JSON.parse(stripJsonc(text));
+function resolveExtendsPath(entry: string, configDirectory: string): string | undefined {
+  if (!entry.startsWith(".") && !isAbsolute(entry)) return undefined;
+  const candidate = resolve(configDirectory, entry);
+  return candidate.endsWith(".json") ? candidate : `${candidate}.json`;
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-async function parseTsconfigPaths(
-  tsconfigPath: string
-): Promise<TsconfigPaths> {
-  let baseUrl = "";
-  let paths: Record<string, string[]> = {};
-
+async function parseTsconfigPaths(tsconfigPath: string): Promise<TsconfigPaths> {
   const visited = new Set<string>();
 
-  // Returns the effective baseUrl from this tsconfig (used for resolving its own paths)
-  async function walk(filePath: string): Promise<string> {
-    const abs = resolve(filePath);
-    if (visited.has(abs)) return baseUrl;
-    visited.add(abs);
+  async function walk(filePath: string): Promise<TsconfigPaths> {
+    const absolutePath = resolve(filePath);
+    if (visited.has(absolutePath)) return { baseUrl: "", paths: {} };
+    visited.add(absolutePath);
 
     let raw: unknown;
     try {
-      raw = await readJsonc(abs);
+      raw = await readJsonc(absolutePath);
     } catch {
-      return baseUrl;
+      return { baseUrl: "", paths: {} };
     }
+    if (!isRecord(raw)) return { baseUrl: "", paths: {} };
 
-    if (!isRecord(raw)) return baseUrl;
-    const dir = dirname(abs);
+    const configDirectory = dirname(absolutePath);
+    const extendsValue = raw["extends"];
+    const extendsEntries = typeof extendsValue === "string"
+      ? [extendsValue]
+      : Array.isArray(extendsValue)
+        ? extendsValue.filter((entry): entry is string => typeof entry === "string")
+        : [];
 
-    // Resolve extends first (so child values override parent).
-    // `extends` can be a string or an array of strings (TS 5.0+).
-    const extendsVal = raw["extends"];
-    const extendsList =
-      typeof extendsVal === "string"
-        ? [extendsVal]
-        : Array.isArray(extendsVal)
-          ? extendsVal.filter((e): e is string => typeof e === "string")
-          : [];
-    for (const entry of extendsList) {
-      const parentPath = resolve(dir, entry);
-      const parent = parentPath.endsWith(".json")
-        ? parentPath
-        : parentPath + ".json";
-      await walk(parent);
+    let inherited: TsconfigPaths = { baseUrl: "", paths: {} };
+    for (const entry of extendsEntries) {
+      const parentPath = resolveExtendsPath(entry, configDirectory);
+      if (parentPath) inherited = await walk(parentPath);
     }
 
     const compilerOptions = raw["compilerOptions"];
-    if (!isRecord(compilerOptions)) return baseUrl;
+    if (!isRecord(compilerOptions)) return inherited;
 
-    // Child overrides parent — apply on top
-    if (typeof compilerOptions["baseUrl"] === "string") {
-      baseUrl = resolve(dir, compilerOptions["baseUrl"]);
-    }
-
-    // Paths are resolved relative to baseUrl (TS spec), not the tsconfig dir
-    // Use the current effective baseUrl for this tsconfig's paths
-    const effectiveBaseUrl = typeof compilerOptions["baseUrl"] === "string"
-      ? resolve(dir, compilerOptions["baseUrl"])
-      : baseUrl;
+    const baseUrl = typeof compilerOptions["baseUrl"] === "string"
+      ? resolve(configDirectory, compilerOptions["baseUrl"])
+      : inherited.baseUrl;
+    if (!("paths" in compilerOptions)) return { baseUrl, paths: inherited.paths };
 
     const rawPaths = compilerOptions["paths"];
-    if (isRecord(rawPaths)) {
-      for (const [key, val] of Object.entries(rawPaths)) {
-        if (Array.isArray(val) && val.every((v) => typeof v === "string")) {
-          // Resolve each path entry relative to baseUrl
-          paths[key] = (val as string[]).map((p) => {
-            // Absolute or rooted paths stay as-is
-            if (p.startsWith("/")) return p;
-            return resolve(effectiveBaseUrl || dir, p);
-          });
-        }
-      }
+    if (!isRecord(rawPaths)) return { baseUrl, paths: {} };
+    const declarationBase = baseUrl || configDirectory;
+    const paths: Record<string, string[]> = {};
+    for (const [pattern, values] of Object.entries(rawPaths)) {
+      if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) continue;
+      paths[pattern] = values.map((value) =>
+        isAbsolute(value) ? value : resolve(declarationBase, value)
+      );
     }
-
-    return effectiveBaseUrl;
+    return { baseUrl, paths };
   }
 
-  await walk(tsconfigPath);
-  return { baseUrl, paths };
+  return walk(tsconfigPath);
 }
 
-async function findAngularJson(startDir: string): Promise<string | null> {
-  let dir = startDir;
-  for (let i = 0; i < 10; i++) {
-    const candidate = join(dir, "angular.json");
-    try {
-      await readFile(candidate);
-      return candidate;
-    } catch {
-      // not found, go up
+function isWithin(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+}
+
+function availableApplications(workspace: DiscoveredWorkspace): WorkspaceProject[] {
+  return [...workspace.projects.values()]
+    .filter((project) => project.projectType === "application")
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function applicationError(message: string, applications: WorkspaceProject[]): Error {
+  const names = applications.map((project) => project.name).join(", ") || "none";
+  return new Error(`${message}. Available applications: ${names}`);
+}
+
+function selectApplication(
+  workspace: DiscoveredWorkspace,
+  targetAbs: string,
+  projectName?: string
+): WorkspaceProject {
+  const applications = availableApplications(workspace);
+
+  if (projectName) {
+    const requested = workspace.projects.get(projectName);
+    if (!requested) throw applicationError(`Project '${projectName}' not found`, applications);
+    if (requested.projectType !== "application") {
+      throw applicationError(`Project '${projectName}' is not an application`, applications);
     }
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
+    return requested;
   }
-  return null;
+
+  const containing = applications
+    .filter((project) => project.root !== workspace.workspaceRoot && isWithin(project.root, targetAbs))
+    .sort((a, b) => b.root.length - a.root.length);
+  if (containing.length > 0) return containing[0];
+
+  if (workspace.defaultProject) {
+    const defaultProject = workspace.projects.get(workspace.defaultProject);
+    if (defaultProject?.projectType === "application") return defaultProject;
+  }
+  if (applications.length === 1) return applications[0];
+  if (applications.length === 0 && workspace.kind === "standalone") {
+    const fallback = workspace.projects.get("app");
+    if (fallback) return fallback;
+  }
+  throw applicationError("Multiple Angular applications found; use --project", applications);
 }
 
-async function readAngularVersion(
-  projectRoot: string
-): Promise<string | undefined> {
-  const pkgPath = join(projectRoot, "package.json");
+async function resolveTsconfigPath(
+  workspaceRoot: string,
+  project: WorkspaceProject
+): Promise<string> {
+  const candidates: string[] = [];
+  if (project.tsConfig) {
+    candidates.push(resolve(workspaceRoot, project.tsConfig));
+    candidates.push(resolve(project.root, project.tsConfig));
+  }
+  candidates.push(
+    join(project.root, "tsconfig.app.json"),
+    join(project.root, "tsconfig.json"),
+    join(workspaceRoot, "tsconfig.base.json"),
+    join(workspaceRoot, "tsconfig.json")
+  );
+  for (const candidate of [...new Set(candidates)]) {
+    if (await fileExists(candidate)) return candidate;
+  }
+  return candidates[0];
+}
+
+async function readAngularVersion(workspaceRoot: string): Promise<string | undefined> {
   try {
-    const raw = await readJsonc(pkgPath);
+    const raw = await readJsonc(join(workspaceRoot, "package.json"));
     if (!isRecord(raw)) return undefined;
-    const deps = raw["dependencies"];
-    if (!isRecord(deps)) return undefined;
-    const ver = deps["@angular/core"];
-    return typeof ver === "string" ? ver : undefined;
+    for (const field of ["dependencies", "devDependencies"]) {
+      const dependencies = raw[field];
+      if (!isRecord(dependencies)) continue;
+      const version = dependencies["@angular/core"];
+      if (typeof version === "string") return version;
+    }
   } catch {
-    return undefined;
+    // A package file is optional for static route analysis.
   }
+  return undefined;
+}
+
+function toProjectInfo(project: WorkspaceProject): WorkspaceProjectInfo {
+  return {
+    name: project.name,
+    projectType: project.projectType,
+    root: project.root,
+    sourceRoot: project.sourceRoot,
+    configPath: project.configPath,
+    tsConfig: project.tsConfig,
+    packageName: project.packageName,
+  };
 }
 
 export async function resolveAngularProject(
   targetAbs: string,
   projectName?: string
 ): Promise<AngularProjectInfo> {
-  const angularJsonPath = await findAngularJson(targetAbs);
-
-  if (!angularJsonPath) {
-    // Fallback: treat targetAbs as project root
-    const projectRoot = targetAbs;
-    const sourceRoot = join(projectRoot, "src");
-    const tsconfigPath = join(projectRoot, "tsconfig.json");
-    const tsconfigPaths = await parseTsconfigPaths(tsconfigPath);
-    const angularVersion = await readAngularVersion(projectRoot);
-
-    return {
-      projectRoot,
-      projectName: "app",
-      sourceRoot,
-      tsconfigPaths,
-      angularVersion,
-    };
-  }
-
-  const angularJsonDir = dirname(angularJsonPath);
-  const raw = await readJsonc(angularJsonPath);
-
-  if (!isRecord(raw)) {
-    throw new Error("angular.json is not a valid object");
-  }
-
-  const projects = raw["projects"];
-  if (!isRecord(projects)) {
-    throw new Error("angular.json has no 'projects' field");
-  }
-
-  // Determine which project to use
-  let chosenName: string;
-  if (projectName && projectName in projects) {
-    chosenName = projectName;
-  } else if (typeof raw["defaultProject"] === "string") {
-    chosenName = raw["defaultProject"];
-  } else {
-    chosenName = Object.keys(projects)[0];
-  }
-
-  const proj = projects[chosenName];
-  if (!isRecord(proj)) {
-    throw new Error(`Project '${chosenName}' not found in angular.json`);
-  }
-
-  const projectRoot = resolve(
-    angularJsonDir,
-    typeof proj["root"] === "string" ? proj["root"] : ""
-  );
-  const sourceRoot = resolve(
-    angularJsonDir,
-    typeof proj["sourceRoot"] === "string" ? proj["sourceRoot"] : "src"
-  );
-
-  // Find tsConfig from architect.build.options.tsConfig
-  let tsconfigPath: string;
-  const architect = proj["architect"];
-  const build = isRecord(architect) ? architect["build"] : undefined;
-  const buildOptsRaw = isRecord(build) ? build["options"] : undefined;
-  const tsConfigRaw = isRecord(buildOptsRaw) ? buildOptsRaw["tsConfig"] : undefined;
-
-  if (typeof tsConfigRaw === "string") {
-    tsconfigPath = resolve(angularJsonDir, tsConfigRaw);
-  } else {
-    // Fallback to tsconfig.json at project root or workspace root
-    const candidates = [
-      join(projectRoot, "tsconfig.app.json"),
-      join(projectRoot, "tsconfig.json"),
-      join(angularJsonDir, "tsconfig.json"),
-    ];
-    tsconfigPath = candidates[0];
-    for (const c of candidates) {
-      try {
-        await readFile(c);
-        tsconfigPath = c;
-        break;
-      } catch {
-        // continue
-      }
-    }
-  }
-
+  const absoluteTarget = resolve(targetAbs);
+  const workspace = await discoverWorkspace(absoluteTarget);
+  const project = selectApplication(workspace, absoluteTarget, projectName);
+  const tsconfigPath = await resolveTsconfigPath(workspace.workspaceRoot, project);
   const tsconfigPaths = await parseTsconfigPaths(tsconfigPath);
-  const angularVersion = await readAngularVersion(angularJsonDir);
 
   return {
-    projectRoot,
-    projectName: chosenName,
-    sourceRoot,
-    angularJsonPath,
+    workspaceRoot: workspace.workspaceRoot,
+    projectRoot: project.root,
+    projectName: project.name,
+    sourceRoot: project.sourceRoot,
+    tsconfigPath,
+    angularJsonPath: workspace.kind === "angular" ? workspace.configPath : undefined,
     tsconfigPaths,
-    angularVersion,
+    workspaceProjects: [...workspace.projects.values()].map(toProjectInfo),
+    angularVersion: await readAngularVersion(workspace.workspaceRoot),
   };
 }

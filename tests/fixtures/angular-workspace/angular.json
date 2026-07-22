@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "newProjectRoot": "projects",
+  "defaultProject": "legacy-app",
+  "projects": {
+    "legacy-app": {
+      "projectType": "application",
+      "root": "projects/legacy-app",
+      "sourceRoot": "projects/legacy-app/src",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "tsConfig": "projects/legacy-app/tsconfig.app.json"
+          }
+        }
+      }
+    },
+    "legacy-lib": {
+      "projectType": "library",
+      "root": "projects/legacy-lib",
+      "sourceRoot": "projects/legacy-lib/src"
+    }
+  }
+}

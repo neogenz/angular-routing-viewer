@@ -84,11 +84,24 @@ export interface TsconfigPaths {
   paths: Record<string, string[]>;
 }
 
+export interface WorkspaceProjectInfo {
+  name: string;
+  projectType: "application" | "library" | "unknown";
+  root: string;
+  sourceRoot: string;
+  configPath: string;
+  tsConfig?: string;
+  packageName?: string;
+}
+
 export interface AngularProjectInfo {
+  workspaceRoot: string;
   projectRoot: string;
   projectName: string;
   sourceRoot: string;
+  tsconfigPath: string;
   angularJsonPath?: string;
   tsconfigPaths: TsconfigPaths;
+  workspaceProjects: WorkspaceProjectInfo[];
   angularVersion?: string;
 }
