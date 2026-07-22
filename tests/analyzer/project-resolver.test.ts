@@ -43,7 +43,12 @@ describe("Nx workspace discovery", () => {
     expect(workspace.kind).toBe("nx");
     expect(workspace.workspaceRoot).toBe(nxWorkspace);
     expect(workspace.configPath).toBe(join(nxWorkspace, "nx.json"));
-    expect([...workspace.projects.keys()].sort()).toEqual(["admin", "store"]);
+    expect([...workspace.projects.keys()].sort()).toEqual([
+      "admin",
+      "order-detail",
+      "orders",
+      "store",
+    ]);
 
     expect(workspace.projects.get("admin")).toMatchObject({
       name: "admin",
@@ -139,6 +144,8 @@ describe("Nx application selection", () => {
     );
     expect(project.workspaceProjects.map(({ name }) => name).sort()).toEqual([
       "admin",
+      "order-detail",
+      "orders",
       "store",
     ]);
   });
@@ -178,6 +185,27 @@ describe("effective TypeScript configuration", () => {
 
     expect(project.tsconfigPaths.baseUrl).toBe(nxWorkspace);
     expect(project.tsconfigPaths.paths).toEqual({
+      "@acme/admin-routes": [
+        join(nxWorkspace, "apps/admin/src/app/app.routes.ts"),
+      ],
+      "@acme/orders": [join(nxWorkspace, "libs/orders/src/index.ts")],
+      "@acme/orders-alias": [
+        join(nxWorkspace, "libs/orders/src/alias.ts"),
+      ],
+      "@acme/orders-cycle": [
+        join(nxWorkspace, "libs/orders/src/cycle-a.ts"),
+      ],
+      "@acme/orders-default": [
+        join(nxWorkspace, "libs/orders/src/default.ts"),
+      ],
+      "@acme/orders-star": [
+        join(nxWorkspace, "libs/orders/src/star.ts"),
+      ],
+      "@acme/provider-routes": [
+        join(nxWorkspace, "apps/provider/src/routes/index.ts"),
+      ],
+      "@acme/routes/*": [join(nxWorkspace, "libs/*/src/index.ts")],
+      "@acme/*": [join(nxWorkspace, "libs/*/src/index.ts")],
       "@fixture/shared/*": [join(nxWorkspace, "libs/shared/src/*")],
       "@fixture/ui": [join(nxWorkspace, "libs/ui/src/index.ts")],
     });

@@ -1,0 +1,7 @@
+{
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "name": "order-detail",
+  "projectType": "library",
+  "root": "libs/order-detail",
+  "sourceRoot": "libs/order-detail/src"
+}

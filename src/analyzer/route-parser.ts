@@ -8,8 +8,12 @@ import {
   type Node,
 } from "ts-morph";
 import { createHash } from "crypto";
-import { resolve, dirname, join, extname } from "path";
-import { readFile } from "fs/promises";
+import { resolve } from "path";
+import {
+  createRouteSourceResolver,
+  extractLazyRouteImport,
+  type RouteSourceResolver,
+} from "./route-source-resolver.js";
 import type {
   RouteNode,
   RouteGraph,
@@ -18,7 +22,6 @@ import type {
   TitleRef,
   LazyRef,
   AngularProjectInfo,
-  TsconfigPaths,
 } from "./types.js";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -34,128 +37,10 @@ function normalizePath(fullPath: string): string {
   return ("/" + fullPath).replace(/\/+/g, "/");
 }
 
-async function fileExists(p: string): Promise<boolean> {
-  try {
-    await readFile(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Resolve a raw import specifier to an absolute .ts file path
-async function resolveImportSpecifier(
-  specifier: string,
-  fromFile: string,
-  tsconfigPaths: TsconfigPaths
-): Promise<string | undefined> {
-  const { baseUrl, paths } = tsconfigPaths;
-
-  // Try tsconfig path aliases first
-  for (const [pattern, targets] of Object.entries(paths)) {
-    if (pattern.endsWith("/*")) {
-      const prefix = pattern.slice(0, -2);
-      if (specifier === prefix || specifier.startsWith(prefix + "/")) {
-        const suffix = specifier.slice(prefix.length + 1);
-        for (const target of targets) {
-          // target already resolved to absolute in project-resolver
-          const resolved = target.endsWith("/*")
-            ? target.slice(0, -2) + "/" + suffix
-            : target;
-          for (const ext of ["", ".ts", "/index.ts"]) {
-            const candidate = resolved + ext;
-            if (await fileExists(candidate)) return candidate;
-          }
-        }
-      }
-    } else {
-      // Exact match
-      if (specifier === pattern) {
-        for (const target of targets) {
-          for (const ext of ["", ".ts"]) {
-            const candidate = target + ext;
-            if (await fileExists(candidate)) return candidate;
-          }
-        }
-      }
-    }
-  }
-
-  // Relative path
-  if (specifier.startsWith(".") || specifier.startsWith("/")) {
-    const base = specifier.startsWith("/")
-      ? specifier
-      : join(dirname(fromFile), specifier);
-    for (const ext of ["", ".ts", ".routes.ts", "/index.ts"]) {
-      const candidate = base + ext;
-      if (await fileExists(candidate)) return candidate;
-    }
-    return undefined;
-  }
-
-  // baseUrl-relative (non-relative, non-aliased)
-  if (baseUrl) {
-    const candidate = join(baseUrl, specifier);
-    for (const ext of ["", ".ts", "/index.ts"]) {
-      if (await fileExists(candidate + ext)) return candidate + ext;
-    }
-  }
-
-  return undefined;
-}
-
-// Extract the dynamic import specifier string from an arrow function body
-// Handles: () => import('x'), () => import('x').then(...)
-function extractDynamicImport(
-  expr: Expression
-): { specifier: string; node: Node } | undefined {
-  // Arrow function
-  if (expr.isKind(SyntaxKind.ArrowFunction)) {
-    const body = expr.getBody();
-    return extractImportFromExpr(body as Expression);
-  }
-  return undefined;
-}
-
-function extractImportFromExpr(
-  node: Node
-): { specifier: string; node: Node } | undefined {
-  // import('x')
-  if (node.isKind(SyntaxKind.CallExpression)) {
-    const callExpr = node.asKindOrThrow(SyntaxKind.CallExpression);
-    const callee = callExpr.getExpression();
-    if (callee.isKind(SyntaxKind.ImportKeyword)) {
-      const args = callExpr.getArguments();
-      if (args.length > 0 && args[0].isKind(SyntaxKind.StringLiteral)) {
-        return {
-          specifier: args[0].asKindOrThrow(SyntaxKind.StringLiteral).getLiteralText(),
-          node: callExpr,
-        };
-      }
-    }
-    // import('x').then(...)
-    if (callee.isKind(SyntaxKind.PropertyAccessExpression)) {
-      const propAccess = callee.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
-      const obj = propAccess.getExpression();
-      return extractImportFromExpr(obj);
-    }
-  }
-  // Block: { return import('x') }
-  if (node.isKind(SyntaxKind.Block)) {
-    const block = node.asKindOrThrow(SyntaxKind.Block);
-    for (const stmt of block.getStatements()) {
-      if (stmt.isKind(SyntaxKind.ReturnStatement)) {
-        const ret = stmt.asKindOrThrow(SyntaxKind.ReturnStatement).getExpression();
-        if (ret) return extractImportFromExpr(ret);
-      }
-    }
-  }
-  return undefined;
-}
-
 interface ResolveCtx {
   project: Project;
   info: AngularProjectInfo;
+  resolver: RouteSourceResolver;
   sourceFile: SourceFile;
 }
 
@@ -220,10 +105,9 @@ async function resolveToStringLiteral(expr: Node, ctx: ResolveCtx): Promise<stri
     if (local !== undefined) return local;
     const specifier = findImportSpecifier(ctx.sourceFile, name);
     if (specifier) {
-      const targetFile = await resolveImportSpecifier(
+      const targetFile = await ctx.resolver.resolveImport(
         specifier,
-        ctx.sourceFile.getFilePath(),
-        ctx.info.tsconfigPaths
+        ctx.sourceFile.getFilePath()
       );
       if (targetFile) {
         const targetSf = ctx.project.addSourceFileAtPathIfExists(targetFile) ?? undefined;
@@ -254,10 +138,9 @@ async function resolveToStringLiteral(expr: Node, ctx: ResolveCtx): Promise<stri
     // Follow import
     const specifier = findImportSpecifier(ctx.sourceFile, objName);
     if (!specifier) return undefined;
-    const targetFile = await resolveImportSpecifier(
+    const targetFile = await ctx.resolver.resolveImport(
       specifier,
-      ctx.sourceFile.getFilePath(),
-      ctx.info.tsconfigPaths
+      ctx.sourceFile.getFilePath()
     );
     if (!targetFile) return undefined;
     const targetSf = ctx.project.addSourceFileAtPathIfExists(targetFile) ?? undefined;
@@ -274,10 +157,9 @@ async function resolveToStringLiteral(expr: Node, ctx: ResolveCtx): Promise<stri
         return alias === objName || exportedName === objName;
       });
       if (matches) {
-        const reTarget = await resolveImportSpecifier(
+        const reTarget = await ctx.resolver.resolveImport(
           mod,
-          targetSf.getFilePath(),
-          ctx.info.tsconfigPaths
+          targetSf.getFilePath()
         );
         if (reTarget) {
           const reSf = ctx.project.addSourceFileAtPathIfExists(reTarget) ?? undefined;
@@ -447,7 +329,22 @@ function unwrapTypeAssertion(expr: Expression): Expression {
 
 // Find the Routes array in a SourceFile
 // Priority: export default > first exported Routes var > first `: Routes =` var
-function findRoutesArray(sf: SourceFile): ArrayLiteralExpression | undefined {
+function findRoutesArray(
+  sf: SourceFile,
+  requestedExport?: string
+): ArrayLiteralExpression | undefined {
+  if (requestedExport && requestedExport !== "default") {
+    const declaration = sf.getVariableDeclaration(requestedExport);
+    const initializer = declaration?.getInitializer();
+    if (initializer) {
+      const expression = unwrapTypeAssertion(initializer);
+      if (expression.isKind(SyntaxKind.ArrayLiteralExpression)) {
+        return expression.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
+      }
+    }
+    return undefined;
+  }
+
   // 1. export default [...] (optionally `as Routes` / `satisfies Routes`)
   // 2. export default xxx (where xxx is a Routes var)
   const defaultExport = sf.getDefaultExportSymbol();
@@ -553,8 +450,10 @@ async function parseRoutesFromFile(
   parentFullPath: string,
   project: Project,
   info: AngularProjectInfo,
+  resolver: RouteSourceResolver,
   warnings: Warning[],
-  visited: Map<string, RouteNode[]>
+  visited: Map<string, RouteNode[]>,
+  requestedExport?: string
 ): Promise<RouteNode[]> {
   if (visited.has(filePath)) {
     warnings.push({
@@ -580,22 +479,19 @@ async function parseRoutesFromFile(
     return [];
   }
 
-  const routesArray = findRoutesArray(sf);
+  const routesArray = findRoutesArray(sf, requestedExport);
   if (!routesArray) {
     // Check for barrel re-export: export { default } from './foo' or export * from './foo'
     const reExportTarget = findDefaultReExport(sf);
     if (reExportTarget) {
-      const resolved = await resolveImportSpecifier(
-        reExportTarget,
-        filePath,
-        info.tsconfigPaths
-      );
+      const resolved = await resolver.resolveImport(reExportTarget, filePath);
       if (resolved && resolved !== filePath) {
         return parseRoutesFromFile(
           resolved,
           parentFullPath,
           project,
           info,
+          resolver,
           warnings,
           visited
         );
@@ -617,6 +513,7 @@ async function parseRoutesFromFile(
     filePath,
     project,
     info,
+    resolver,
     warnings,
     visited
   );
@@ -631,6 +528,7 @@ async function parseRouteElements(
   filePath: string,
   project: Project,
   info: AngularProjectInfo,
+  resolver: RouteSourceResolver,
   warnings: Warning[],
   visited: Map<string, RouteNode[]>
 ): Promise<RouteNode[]> {
@@ -643,6 +541,7 @@ async function parseRouteElements(
       filePath,
       project,
       info,
+      resolver,
       warnings,
       visited
     );
@@ -658,11 +557,12 @@ async function parseRouteObject(
   filePath: string,
   project: Project,
   info: AngularProjectInfo,
+  resolver: RouteSourceResolver,
   warnings: Warning[],
   visited: Map<string, RouteNode[]>
 ): Promise<RouteNode> {
   const sourceLine = obj.getStartLineNumber();
-  const ctx: ResolveCtx = { project, info, sourceFile: obj.getSourceFile() };
+  const ctx: ResolveCtx = { project, info, resolver, sourceFile: obj.getSourceFile() };
 
   // path
   const pathRaw = await getPropString(obj, "path", ctx);
@@ -732,14 +632,17 @@ async function parseRouteObject(
   if (lcProp?.isKind(SyntaxKind.PropertyAssignment)) {
     const lcInit = lcProp.asKindOrThrow(SyntaxKind.PropertyAssignment).getInitializer();
     if (lcInit) {
-      const dynImport = extractDynamicImport(lcInit);
+      const dynImport = extractLazyRouteImport(lcInit);
       if (dynImport) {
-        const resolved = await resolveImportSpecifier(
-          dynImport.specifier,
-          filePath,
-          info.tsconfigPaths
-        );
-        loadComponent = { source: dynImport.specifier, resolvedFile: resolved };
+        const resolvedSource = await resolver.resolveSource({
+          specifier: dynImport.specifier,
+          fromFile: filePath,
+          exportName: dynImport.exportName,
+        });
+        loadComponent = {
+          source: dynImport.specifier,
+          resolvedFile: resolvedSource?.filePath,
+        };
       } else {
         loadComponent = { source: lcInit.getText() };
       }
@@ -754,13 +657,14 @@ async function parseRouteObject(
   if (ldProp?.isKind(SyntaxKind.PropertyAssignment)) {
     const ldInit = ldProp.asKindOrThrow(SyntaxKind.PropertyAssignment).getInitializer();
     if (ldInit) {
-      const dynImport = extractDynamicImport(ldInit);
+      const dynImport = extractLazyRouteImport(ldInit);
       if (dynImport) {
-        const resolved = await resolveImportSpecifier(
-          dynImport.specifier,
-          filePath,
-          info.tsconfigPaths
-        );
+        const resolvedSource = await resolver.resolveSource({
+          specifier: dynImport.specifier,
+          fromFile: filePath,
+          exportName: dynImport.exportName,
+        });
+        const resolved = resolvedSource?.filePath;
         loadChildren = { source: dynImport.specifier, resolvedFile: resolved };
 
         if (resolved && resolved.endsWith(".ts")) {
@@ -769,8 +673,10 @@ async function parseRouteObject(
             fullPath,
             project,
             info,
+            resolver,
             warnings,
-            visited
+            visited,
+            resolvedSource?.exportName
           );
         }
       } else {
@@ -798,6 +704,7 @@ async function parseRouteObject(
         filePath,
         project,
         info,
+        resolver,
         warnings,
         visited
       );
@@ -821,6 +728,7 @@ async function parseRouteObject(
         filePath,
         project,
         info,
+        resolver,
         warnings,
         visited
       );
@@ -880,13 +788,8 @@ export async function buildRouteGraph(
 ): Promise<RouteGraph> {
   const warnings: Warning[] = [];
 
-  // Prefer the project-specific tsconfig if available, fallback to root
-  const tsConfigFilePath = info.tsconfigPaths.baseUrl
-    ? undefined
-    : undefined;
-
   const project = new Project({
-    tsConfigFilePath,
+    tsConfigFilePath: info.tsconfigPath,
     skipAddingFilesFromTsConfig: true,
     compilerOptions: {
       skipLibCheck: true,
@@ -895,6 +798,7 @@ export async function buildRouteGraph(
       noEmit: true,
     },
   });
+  const resolver = createRouteSourceResolver(info, project);
 
   const visited = new Map<string, RouteNode[]>();
 
@@ -903,9 +807,11 @@ export async function buildRouteGraph(
     "",
     project,
     info,
+    resolver,
     warnings,
     visited
   );
+  warnings.push(...resolver.warnings);
 
   return {
     roots,

@@ -2,6 +2,15 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
+      "@acme/admin-routes": ["apps/admin/src/app/app.routes.ts"],
+      "@acme/orders": ["libs/orders/src/index.ts"],
+      "@acme/orders-alias": ["libs/orders/src/alias.ts"],
+      "@acme/orders-cycle": ["libs/orders/src/cycle-a.ts"],
+      "@acme/orders-default": ["libs/orders/src/default.ts"],
+      "@acme/orders-star": ["libs/orders/src/star.ts"],
+      "@acme/provider-routes": ["apps/provider/src/routes/index.ts"],
+      "@acme/routes/*": ["libs/*/src/index.ts"],
+      "@acme/*": ["libs/*/src/index.ts"],
       "@fixture/shared/*": ["libs/shared/src/*"],
       "@fixture/ui": ["libs/ui/src/index.ts"]
     }
