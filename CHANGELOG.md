@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-22
+
+### Added
+
+- Discover Angular applications and libraries from Nx `project.json` and
+  `package.json#nx` configuration, with explicit application selection through
+  `--project`.
+- Resolve route sources across TypeScript path aliases, local Nx packages,
+  barrels, and named or default exports.
+- Compose imported route fragments, nested `children`, array spreads, lazy
+  routes, and `RouterModule.forRoot` / `RouterModule.forChild` definitions.
+- Deterministic Nx and Angular CLI integration coverage for cross-project route
+  graphs, application isolation, cycles, and runtime-only loaders.
+
+### Changed
+
+- Report analyzed source paths relative to the workspace root.
+- Document Nx usage, supported static routing patterns, and runtime analysis
+  limits.
+- Run the test suite in CI before type checking and bundling.
+
+### Fixed
+
+- Resolve direct `loadComponent` imports when the component is declared with
+  `export default class` or `export default function`.
+
 ## [0.1.1] - 2026-06-30
 
 ### Changed
@@ -26,6 +52,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--verbose`, `--help`.
 - Distribution via npm; runs under plain Node (Bun is dev-only).
 
-[Unreleased]: https://github.com/neogenz/angular-routing-viewer/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/neogenz/angular-routing-viewer/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/neogenz/angular-routing-viewer/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/neogenz/angular-routing-viewer/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/neogenz/angular-routing-viewer/releases/tag/v0.1.0
