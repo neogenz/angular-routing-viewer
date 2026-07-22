@@ -1,6 +1,6 @@
 ---
 objective: "Angular Routing Viewer statically detects the complete route tree of a selected Angular application in Nx workspaces, including route fragments owned by libraries, with automated regression coverage."
-status: in-progress
+status: implemented
 ---
 
 # Plan: Nx workspace and library route detection
