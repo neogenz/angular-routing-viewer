@@ -297,8 +297,6 @@ async function parseTitleProp(
   return { source: init.getText(), kind: "reference" };
 }
 
-// Check if a file is a barrel that re-exports default from another file
-// e.g. "export { default } from './welcome.routes'"
 function findDefaultReExport(sf: SourceFile): string | undefined {
   for (const exportDecl of sf.getExportDeclarations()) {
     const moduleSpecifier = exportDecl.getModuleSpecifierValue();
@@ -313,237 +311,394 @@ function findDefaultReExport(sf: SourceFile): string | undefined {
   return undefined;
 }
 
-// Strip `as T` and `satisfies T` wrappers (either order, possibly nested).
-function unwrapTypeAssertion(expr: Expression): Expression {
-  let current = expr;
+function unwrapRouteExpression(node: Node): Node {
+  let current = node;
   while (
+    current.isKind(SyntaxKind.ParenthesizedExpression) ||
     current.isKind(SyntaxKind.AsExpression) ||
     current.isKind(SyntaxKind.SatisfiesExpression)
   ) {
-    current = current.isKind(SyntaxKind.AsExpression)
-      ? current.asKindOrThrow(SyntaxKind.AsExpression).getExpression()
-      : current.asKindOrThrow(SyntaxKind.SatisfiesExpression).getExpression();
+    current = current.isKind(SyntaxKind.ParenthesizedExpression)
+      ? current.asKindOrThrow(SyntaxKind.ParenthesizedExpression).getExpression()
+      : current.isKind(SyntaxKind.AsExpression)
+        ? current.asKindOrThrow(SyntaxKind.AsExpression).getExpression()
+        : current.asKindOrThrow(SyntaxKind.SatisfiesExpression).getExpression();
   }
   return current;
 }
 
-// Find the Routes array in a SourceFile
-// Priority: export default > first exported Routes var > first `: Routes =` var
-function findRoutesArray(
+function isRouteArrayDeclaration(declaration: ReturnType<SourceFile["getVariableDeclarations"]>[number]): boolean {
+  const typeText = declaration.getTypeNode()?.getText().replace(/\s/g, "") ?? "";
+  if (
+    typeText.includes("Routes") ||
+    typeText.includes("Route[]") ||
+    typeText.includes("ReadonlyArray<Route>") ||
+    typeText.includes("readonlyRoute[]")
+  ) {
+    return true;
+  }
+  const initializer = declaration.getInitializer();
+  if (!initializer?.isKind(SyntaxKind.SatisfiesExpression)) return false;
+  const satisfiesType = initializer
+    .asKindOrThrow(SyntaxKind.SatisfiesExpression)
+    .getTypeNode()
+    ?.getText()
+    .replace(/\s/g, "") ?? "";
+  return satisfiesType.includes("Routes") || satisfiesType.includes("Route[]");
+}
+
+function findRoutesExpression(
   sf: SourceFile,
   requestedExport?: string
-): ArrayLiteralExpression | undefined {
+): Node | undefined {
   if (requestedExport && requestedExport !== "default") {
-    const declaration = sf.getVariableDeclaration(requestedExport);
-    const initializer = declaration?.getInitializer();
-    if (initializer) {
-      const expression = unwrapTypeAssertion(initializer);
-      if (expression.isKind(SyntaxKind.ArrayLiteralExpression)) {
-        return expression.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
-      }
-    }
-    return undefined;
+    return sf.getVariableDeclaration(requestedExport)?.getInitializer();
   }
 
-  // 1. export default [...] (optionally `as Routes` / `satisfies Routes`)
-  // 2. export default xxx (where xxx is a Routes var)
-  const defaultExport = sf.getDefaultExportSymbol();
-  if (defaultExport) {
-    const decls = defaultExport.getDeclarations();
-    for (const decl of decls) {
-      if (decl.isKind(SyntaxKind.ExportAssignment)) {
-        const expr = unwrapTypeAssertion(
-          decl.asKindOrThrow(SyntaxKind.ExportAssignment).getExpression()
-        );
-        if (expr.isKind(SyntaxKind.ArrayLiteralExpression)) {
-          return expr.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
-        }
-        // export default identifier → find it
-        if (expr.isKind(SyntaxKind.Identifier)) {
-          const name = expr.getText();
-          const varDecl = sf.getVariableDeclaration(name);
-          if (varDecl) {
-            const init = varDecl.getInitializer();
-            if (init?.isKind(SyntaxKind.ArrayLiteralExpression)) {
-              return init.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
-            }
-          }
-        }
-      }
-    }
+  for (const assignment of sf.getExportAssignments()) {
+    if (!assignment.isExportEquals()) return assignment.getExpression();
   }
+  if (requestedExport === "default") return undefined;
 
-  // 3. export const xxx: Routes = [...]
-  for (const varStatement of sf.getVariableStatements()) {
-    for (const decl of varStatement.getDeclarations()) {
-      const typeNode = decl.getTypeNode();
-      const init = decl.getInitializer();
-      if (
-        typeNode &&
-        typeNode.getText().replace(/\s/g, "").includes("Routes") &&
-        init?.isKind(SyntaxKind.ArrayLiteralExpression)
-      ) {
-        return init.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
-      }
-    }
+  for (const declaration of sf.getVariableDeclarations()) {
+    if (isRouteArrayDeclaration(declaration)) return declaration.getInitializer();
   }
-
   return undefined;
 }
 
-// Flatten an array literal, expanding spread ternaries into their whenTrue branch
-function flattenElements(
-  arr: ArrayLiteralExpression,
+interface RouteElementSource {
+  object: ObjectLiteralExpression;
+  filePath: string;
+  activeExpressions: Set<string>;
+}
+
+interface ParseState {
+  project: Project;
+  info: AngularProjectInfo;
+  resolver: RouteSourceResolver;
   warnings: Warning[],
-  filePath: string
-): ObjectLiteralExpression[] {
-  const result: ObjectLiteralExpression[] = [];
+}
 
-  for (const elem of arr.getElements()) {
-    if (elem.isKind(SyntaxKind.ObjectLiteralExpression)) {
-      result.push(elem.asKindOrThrow(SyntaxKind.ObjectLiteralExpression));
-    } else if (elem.isKind(SyntaxKind.SpreadElement)) {
-      // ...(isDevMode() ? [...] : [])
-      const spread = elem.asKindOrThrow(SyntaxKind.SpreadElement);
-      const spreadLine = spread.getStartLineNumber();
-      let inner: Node = spread.getExpression();
-
-      if (inner.isKind(SyntaxKind.ParenthesizedExpression)) {
-        inner = inner.asKindOrThrow(SyntaxKind.ParenthesizedExpression).getExpression();
-      }
-
-      if (inner.isKind(SyntaxKind.ConditionalExpression)) {
-        const cond = inner.asKindOrThrow(SyntaxKind.ConditionalExpression);
-        const whenTrue = cond.getWhenTrue();
-        const condText = cond.getCondition().getText();
-        let addedCount = 0;
-        if (whenTrue.isKind(SyntaxKind.ArrayLiteralExpression)) {
-          const truthyArr = whenTrue.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
-          const flattened = flattenElements(truthyArr, warnings, filePath);
-          addedCount = flattened.length;
-          result.push(...flattened);
-        }
-        const plural = addedCount === 1 ? "" : "s";
-        warnings.push({
-          level: "info",
-          message: `Conditional spread (${condText}) — ${addedCount} route${plural} included from truthy branch`,
-          file: filePath,
-          line: spreadLine,
-        });
-      } else {
-        warnings.push({
-          level: "warn",
-          message: `Non-ternary spread skipped: ${elem.getText().slice(0, 60)}`,
-          file: filePath,
-          line: spreadLine,
-        });
-      }
+function importedBinding(
+  sourceFile: SourceFile,
+  localName: string
+): { specifier: string; exportName: string } | undefined {
+  for (const declaration of sourceFile.getImportDeclarations()) {
+    const specifier = declaration.getModuleSpecifierValue();
+    if (declaration.getDefaultImport()?.getText() === localName) {
+      return { specifier, exportName: "default" };
+    }
+    for (const named of declaration.getNamedImports()) {
+      const importedName = named.getNameNode().getText();
+      const bindingName = named.getAliasNode()?.getText() ?? importedName;
+      if (bindingName === localName) return { specifier, exportName: importedName };
     }
   }
+  return undefined;
+}
 
+function routeSourceKey(filePath: string, exportName?: string): string {
+  return `${resolve(filePath)}#${exportName ?? "<auto>"}`;
+}
+
+function addRouteCycleWarning(
+  state: ParseState,
+  filePath: string,
+  exportName?: string,
+  line?: number
+): void {
+  const identity = exportName ? `${filePath}#${exportName}` : filePath;
+  state.warnings.push({
+    level: "warn",
+    message: `Route source cycle detected: ${identity}`,
+    file: filePath,
+    line,
+  });
+}
+
+async function resolveRouteElements(
+  expression: Node,
+  sourceFile: SourceFile,
+  state: ParseState,
+  activeExpressions: Set<string>
+): Promise<RouteElementSource[]> {
+  const current = unwrapRouteExpression(expression);
+  const filePath = sourceFile.getFilePath();
+
+  if (current.isKind(SyntaxKind.ArrayLiteralExpression)) {
+    const result: RouteElementSource[] = [];
+    for (const element of current.asKindOrThrow(SyntaxKind.ArrayLiteralExpression).getElements()) {
+      if (element.isKind(SyntaxKind.ObjectLiteralExpression)) {
+        result.push({
+          object: element.asKindOrThrow(SyntaxKind.ObjectLiteralExpression),
+          filePath,
+          activeExpressions: new Set(activeExpressions),
+        });
+        continue;
+      }
+      if (!element.isKind(SyntaxKind.SpreadElement)) continue;
+      const spread = element.asKindOrThrow(SyntaxKind.SpreadElement);
+      const spreadExpression = unwrapRouteExpression(spread.getExpression());
+      if (spreadExpression.isKind(SyntaxKind.ConditionalExpression)) {
+        const conditional = spreadExpression.asKindOrThrow(SyntaxKind.ConditionalExpression);
+        const included = await resolveRouteElements(
+          conditional.getWhenTrue(),
+          sourceFile,
+          state,
+          activeExpressions
+        );
+        result.push(...included);
+        const plural = included.length === 1 ? "" : "s";
+        state.warnings.push({
+          level: "info",
+          message: `Conditional spread (${conditional.getCondition().getText()}) — ${included.length} route${plural} included from truthy branch`,
+          file: filePath,
+          line: spread.getStartLineNumber(),
+        });
+        continue;
+      }
+      const included = await resolveRouteElements(
+        spreadExpression,
+        sourceFile,
+        state,
+        activeExpressions
+      );
+      if (included.length === 0) {
+        state.warnings.push({
+          level: "warn",
+          message: `Route spread could not be resolved statically: ${spread.getText().slice(0, 80)}`,
+          file: filePath,
+          line: spread.getStartLineNumber(),
+        });
+      }
+      result.push(...included);
+    }
+    return result;
+  }
+
+  if (!current.isKind(SyntaxKind.Identifier)) return [];
+  const identifier = current.asKindOrThrow(SyntaxKind.Identifier);
+  const localName = identifier.getText();
+  const localDeclaration = sourceFile.getVariableDeclaration(localName);
+  if (localDeclaration?.getInitializer()) {
+    const key = routeSourceKey(filePath, localName);
+    if (activeExpressions.has(key)) {
+      addRouteCycleWarning(state, filePath, localName, identifier.getStartLineNumber());
+      return [];
+    }
+    const nextActive = new Set(activeExpressions).add(key);
+    return resolveRouteElements(
+      localDeclaration.getInitializerOrThrow(),
+      sourceFile,
+      state,
+      nextActive
+    );
+  }
+
+  const imported = importedBinding(sourceFile, localName);
+  if (!imported) return [];
+  const resolvedSource = await state.resolver.resolveSource({
+    ...imported,
+    fromFile: filePath,
+  });
+  if (!resolvedSource) return [];
+  const key = routeSourceKey(resolvedSource.filePath, resolvedSource.exportName);
+  if (activeExpressions.has(key)) {
+    addRouteCycleWarning(
+      state,
+      resolvedSource.filePath,
+      resolvedSource.exportName,
+      identifier.getStartLineNumber()
+    );
+    return [];
+  }
+  const targetFile = state.project.addSourceFileAtPathIfExists(resolvedSource.filePath);
+  if (!targetFile) return [];
+  const targetExpression = findRoutesExpression(targetFile, resolvedSource.exportName);
+  if (!targetExpression) return [];
+  return resolveRouteElements(
+    targetExpression,
+    targetFile,
+    state,
+    new Set(activeExpressions).add(key)
+  );
+}
+
+async function resolveNgModuleElements(
+  sourceFile: SourceFile,
+  requestedExport: string | undefined,
+  state: ParseState,
+  activeModules: Set<string>,
+  activeExpressions: Set<string>
+): Promise<RouteElementSource[]> {
+  const moduleClass = requestedExport && requestedExport !== "default"
+    ? sourceFile.getClass(requestedExport)
+    : sourceFile.getClasses().find((declaration) => declaration.getDecorator("NgModule"));
+  if (!moduleClass) return [];
+  const moduleKey = routeSourceKey(sourceFile.getFilePath(), moduleClass.getName());
+  if (activeModules.has(moduleKey)) {
+    addRouteCycleWarning(state, sourceFile.getFilePath(), moduleClass.getName());
+    return [];
+  }
+  const nextModules = new Set(activeModules).add(moduleKey);
+  const decorator = moduleClass.getDecorator("NgModule");
+  const metadata = decorator
+    ?.getCallExpression()
+    ?.getArguments()[0]
+    ?.asKind(SyntaxKind.ObjectLiteralExpression);
+  const importsProperty = metadata?.getProperty("imports")?.asKind(SyntaxKind.PropertyAssignment);
+  const importsArray = importsProperty?.getInitializerIfKind(SyntaxKind.ArrayLiteralExpression);
+  if (!importsArray) return [];
+
+  const result: RouteElementSource[] = [];
+  for (const moduleImport of importsArray.getElements()) {
+    if (moduleImport.isKind(SyntaxKind.CallExpression)) {
+      const call = moduleImport.asKindOrThrow(SyntaxKind.CallExpression);
+      const callee = call.getExpression();
+      if (
+        callee.isKind(SyntaxKind.PropertyAccessExpression) &&
+        callee.asKindOrThrow(SyntaxKind.PropertyAccessExpression).getExpression().getText() === "RouterModule" &&
+        ["forChild", "forRoot"].includes(
+          callee.asKindOrThrow(SyntaxKind.PropertyAccessExpression).getName()
+        )
+      ) {
+        const routesExpression = call.getArguments()[0];
+        if (routesExpression) {
+          result.push(
+            ...(await resolveRouteElements(
+              routesExpression,
+              sourceFile,
+              state,
+              activeExpressions
+            ))
+          );
+        }
+      }
+      continue;
+    }
+    if (!moduleImport.isKind(SyntaxKind.Identifier)) continue;
+    const moduleName = moduleImport.getText();
+    const localModule = sourceFile.getClass(moduleName);
+    if (localModule) {
+      result.push(
+        ...(await resolveNgModuleElements(
+          sourceFile,
+          moduleName,
+          state,
+          nextModules,
+          activeExpressions
+        ))
+      );
+      continue;
+    }
+    const imported = importedBinding(sourceFile, moduleName);
+    if (!imported) continue;
+    const resolvedModule = await state.resolver.resolveSource({
+      ...imported,
+      fromFile: sourceFile.getFilePath(),
+    });
+    if (!resolvedModule) continue;
+    const targetFile = state.project.addSourceFileAtPathIfExists(resolvedModule.filePath);
+    if (!targetFile) continue;
+    result.push(
+      ...(await resolveNgModuleElements(
+        targetFile,
+        resolvedModule.exportName,
+        state,
+        nextModules,
+        activeExpressions
+      ))
+    );
+  }
   return result;
 }
 
-// Core recursive parser
 async function parseRoutesFromFile(
   filePath: string,
   parentFullPath: string,
-  project: Project,
-  info: AngularProjectInfo,
-  resolver: RouteSourceResolver,
-  warnings: Warning[],
-  visited: Map<string, RouteNode[]>,
+  state: ParseState,
+  activeSources: Set<string>,
   requestedExport?: string
 ): Promise<RouteNode[]> {
-  if (visited.has(filePath)) {
-    warnings.push({
-      level: "info",
-      message: `Cycle detected, already parsed: ${filePath}`,
-      file: filePath,
-    });
+  const sourceKey = routeSourceKey(filePath, requestedExport);
+  if (activeSources.has(sourceKey)) {
+    addRouteCycleWarning(state, filePath, requestedExport);
     return [];
   }
-
-  // Mark as in-progress with empty array to detect cycles
-  visited.set(filePath, []);
-
-  let sf: SourceFile;
-  try {
-    sf = project.addSourceFileAtPath(filePath);
-  } catch (e) {
-    warnings.push({
+  const nextSources = new Set(activeSources).add(sourceKey);
+  const sourceFile = state.project.addSourceFileAtPathIfExists(filePath);
+  if (!sourceFile) {
+    state.warnings.push({
       level: "warn",
-      message: `Unable to read file: ${filePath} - ${String(e)}`,
+      message: `Unable to read file: ${filePath}`,
       file: filePath,
     });
     return [];
   }
 
-  const routesArray = findRoutesArray(sf, requestedExport);
-  if (!routesArray) {
-    // Check for barrel re-export: export { default } from './foo' or export * from './foo'
-    const reExportTarget = findDefaultReExport(sf);
+  const expression = findRoutesExpression(sourceFile, requestedExport);
+  let elements = expression
+    ? await resolveRouteElements(
+        expression,
+        sourceFile,
+        state,
+        new Set([sourceKey])
+      )
+    : await resolveNgModuleElements(
+        sourceFile,
+        requestedExport,
+        state,
+        new Set(),
+        new Set([sourceKey])
+      );
+
+  if (elements.length === 0 && !expression && requestedExport === undefined) {
+    const reExportTarget = findDefaultReExport(sourceFile);
     if (reExportTarget) {
-      const resolved = await resolver.resolveImport(reExportTarget, filePath);
-      if (resolved && resolved !== filePath) {
+      const resolvedSource = await state.resolver.resolveSource({
+        specifier: reExportTarget,
+        fromFile: filePath,
+        exportName: "default",
+      });
+      if (resolvedSource) {
         return parseRoutesFromFile(
-          resolved,
+          resolvedSource.filePath,
           parentFullPath,
-          project,
-          info,
-          resolver,
-          warnings,
-          visited
+          state,
+          nextSources,
+          resolvedSource.exportName
         );
       }
     }
+  }
 
-    warnings.push({
+  if (elements.length === 0 && !expression) {
+    state.warnings.push({
       level: "warn",
-      message: `No Routes array found in: ${filePath}`,
+      message: `No Routes array or RouterModule routes found in: ${filePath}`,
       file: filePath,
     });
     return [];
   }
-
-  const elements = flattenElements(routesArray, warnings, filePath);
-  const nodes = await parseRouteElements(
-    elements,
-    parentFullPath,
-    filePath,
-    project,
-    info,
-    resolver,
-    warnings,
-    visited
-  );
-
-  visited.set(filePath, nodes);
-  return nodes;
+  return parseRouteElements(elements, parentFullPath, state, nextSources);
 }
 
 async function parseRouteElements(
-  elements: ObjectLiteralExpression[],
+  elements: RouteElementSource[],
   parentFullPath: string,
-  filePath: string,
-  project: Project,
-  info: AngularProjectInfo,
-  resolver: RouteSourceResolver,
-  warnings: Warning[],
-  visited: Map<string, RouteNode[]>
+  state: ParseState,
+  activeSources: Set<string>
 ): Promise<RouteNode[]> {
   const nodes: RouteNode[] = [];
 
-  for (const obj of elements) {
+  for (const element of elements) {
     const node = await parseRouteObject(
-      obj,
+      element.object,
       parentFullPath,
-      filePath,
-      project,
-      info,
-      resolver,
-      warnings,
-      visited
+      element.filePath,
+      state,
+      activeSources,
+      element.activeExpressions
     );
     nodes.push(node);
   }
@@ -551,16 +706,28 @@ async function parseRouteElements(
   return nodes;
 }
 
+function loaderReturnExpression(expression: Node): Node | undefined {
+  const current = unwrapRouteExpression(expression);
+  if (!current.isKind(SyntaxKind.ArrowFunction)) return undefined;
+  const body = current.asKindOrThrow(SyntaxKind.ArrowFunction).getBody();
+  if (!body.isKind(SyntaxKind.Block)) return unwrapRouteExpression(body);
+  for (const statement of body.asKindOrThrow(SyntaxKind.Block).getStatements()) {
+    if (!statement.isKind(SyntaxKind.ReturnStatement)) continue;
+    const returned = statement.asKindOrThrow(SyntaxKind.ReturnStatement).getExpression();
+    return returned ? unwrapRouteExpression(returned) : undefined;
+  }
+  return undefined;
+}
+
 async function parseRouteObject(
   obj: ObjectLiteralExpression,
   parentFullPath: string,
   filePath: string,
-  project: Project,
-  info: AngularProjectInfo,
-  resolver: RouteSourceResolver,
-  warnings: Warning[],
-  visited: Map<string, RouteNode[]>
+  state: ParseState,
+  activeSources: Set<string>,
+  activeExpressions: Set<string>
 ): Promise<RouteNode> {
+  const { project, info, resolver, warnings } = state;
   const sourceLine = obj.getStartLineNumber();
   const ctx: ResolveCtx = { project, info, resolver, sourceFile: obj.getSourceFile() };
 
@@ -671,66 +838,57 @@ async function parseRouteObject(
           children = await parseRoutesFromFile(
             resolved,
             fullPath,
-            project,
-            info,
-            resolver,
-            warnings,
-            visited,
+            state,
+            activeSources,
             resolvedSource?.exportName
           );
         }
       } else {
         loadChildren = { source: ldInit.getText() };
+        const returned = loaderReturnExpression(ldInit);
+        const routeElements = returned
+          ? await resolveRouteElements(
+              returned,
+              obj.getSourceFile(),
+              state,
+              new Set(activeExpressions)
+            )
+          : [];
+        if (routeElements.length > 0) {
+          children = await parseRouteElements(
+            routeElements,
+            fullPath,
+            state,
+            activeSources
+          );
+        } else {
+          warnings.push({
+            level: "warn",
+            message: `Unable to statically resolve loadChildren: ${ldInit.getText()}`,
+            file: filePath,
+            line: ldInit.getStartLineNumber(),
+          });
+        }
       }
     }
   }
 
   // Inline children
   const childrenProp = obj.getProperty("children");
-  if (
-    childrenProp?.isKind(SyntaxKind.PropertyAssignment) &&
-    !loadChildren // don't overwrite with empty if loadChildren already gave us children
-  ) {
+  if (childrenProp?.isKind(SyntaxKind.PropertyAssignment) && (!loadChildren || children.length === 0)) {
     const childInit = childrenProp.asKindOrThrow(SyntaxKind.PropertyAssignment).getInitializer();
-    if (childInit?.isKind(SyntaxKind.ArrayLiteralExpression)) {
-      const childElems = flattenElements(
-        childInit.asKindOrThrow(SyntaxKind.ArrayLiteralExpression),
-        warnings,
-        filePath
+    if (childInit) {
+      const childElements = await resolveRouteElements(
+        childInit,
+        obj.getSourceFile(),
+        state,
+        new Set(activeExpressions)
       );
       children = await parseRouteElements(
-        childElems,
+        childElements,
         fullPath,
-        filePath,
-        project,
-        info,
-        resolver,
-        warnings,
-        visited
-      );
-    }
-  } else if (
-    childrenProp?.isKind(SyntaxKind.PropertyAssignment) &&
-    loadChildren &&
-    children.length === 0
-  ) {
-    // has both loadChildren AND inline children — parse inline too
-    const childInit = childrenProp.asKindOrThrow(SyntaxKind.PropertyAssignment).getInitializer();
-    if (childInit?.isKind(SyntaxKind.ArrayLiteralExpression)) {
-      const childElems = flattenElements(
-        childInit.asKindOrThrow(SyntaxKind.ArrayLiteralExpression),
-        warnings,
-        filePath
-      );
-      children = await parseRouteElements(
-        childElems,
-        fullPath,
-        filePath,
-        project,
-        info,
-        resolver,
-        warnings,
-        visited
+        state,
+        activeSources
       );
     }
   }
@@ -799,17 +957,13 @@ export async function buildRouteGraph(
     },
   });
   const resolver = createRouteSourceResolver(info, project);
-
-  const visited = new Map<string, RouteNode[]>();
+  const state: ParseState = { project, info, resolver, warnings };
 
   const roots = await parseRoutesFromFile(
     resolve(entryFile),
     "",
-    project,
-    info,
-    resolver,
-    warnings,
-    visited
+    state,
+    new Set()
   );
   warnings.push(...resolver.warnings);
 

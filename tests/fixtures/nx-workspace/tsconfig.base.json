@@ -3,6 +3,7 @@
     "baseUrl": ".",
     "paths": {
       "@acme/admin-routes": ["apps/admin/src/app/app.routes.ts"],
+      "@acme/legacy-orders": ["libs/legacy-orders/src/index.ts"],
       "@acme/orders": ["libs/orders/src/index.ts"],
       "@acme/orders-alias": ["libs/orders/src/alias.ts"],
       "@acme/orders-cycle": ["libs/orders/src/cycle-a.ts"],

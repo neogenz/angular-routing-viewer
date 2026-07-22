@@ -1,0 +1,7 @@
+{
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "name": "legacy-orders",
+  "projectType": "library",
+  "root": "libs/legacy-orders",
+  "sourceRoot": "libs/legacy-orders/src"
+}

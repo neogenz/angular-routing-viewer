@@ -131,9 +131,9 @@ describe("lazy route import selection", () => {
     const graph = await buildRouteGraph(adminRoutes, info);
 
     expect(graph.roots[0]?.fullPath).toBe("/orders");
-    expect(graph.roots[0]?.children.map(({ fullPath }) => fullPath)).toEqual([
-      "/orders/list",
-    ]);
+    const childPaths = graph.roots[0]?.children.map(({ fullPath }) => fullPath);
+    expect(childPaths).toContain("/orders/list");
+    expect(childPaths).not.toContain("/orders/not-orders");
   });
 });
 

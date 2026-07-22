@@ -45,6 +45,7 @@ describe("Nx workspace discovery", () => {
     expect(workspace.configPath).toBe(join(nxWorkspace, "nx.json"));
     expect([...workspace.projects.keys()].sort()).toEqual([
       "admin",
+      "legacy-orders",
       "order-detail",
       "orders",
       "store",
@@ -144,6 +145,7 @@ describe("Nx application selection", () => {
     );
     expect(project.workspaceProjects.map(({ name }) => name).sort()).toEqual([
       "admin",
+      "legacy-orders",
       "order-detail",
       "orders",
       "store",
@@ -187,6 +189,9 @@ describe("effective TypeScript configuration", () => {
     expect(project.tsconfigPaths.paths).toEqual({
       "@acme/admin-routes": [
         join(nxWorkspace, "apps/admin/src/app/app.routes.ts"),
+      ],
+      "@acme/legacy-orders": [
+        join(nxWorkspace, "libs/legacy-orders/src/index.ts"),
       ],
       "@acme/orders": [join(nxWorkspace, "libs/orders/src/index.ts")],
       "@acme/orders-alias": [
